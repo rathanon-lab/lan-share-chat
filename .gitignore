@@ -1,0 +1,15 @@
+node_modules/
+.next/
+.env
+.env.local
+*.sqlite
+*.db
+storage/
+uploads/
+beta-test/
+qa-artifacts/
+test-results/
+*.log
+tsconfig.tsbuildinfo
+PORTFOLIO_AUDIT_REPORT.md
+tools/
