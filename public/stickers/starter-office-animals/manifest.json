@@ -1,0 +1,107 @@
+{
+  "id": "starter-office-animals",
+  "name": "แก๊งสัตว์น้อยประจำห้อง",
+  "description": "ชุดสติกเกอร์เริ่มต้น 16 ตัว ภาษาไทยน่ารัก ใช้ได้ทุกวัน (Built-in Pack)",
+  "version": "1.0.0",
+  "author": "LAN Share Chat Built-in",
+  "main": "main.webp",
+  "tab": "tab.webp",
+  "items": [
+    {
+      "id": "01-good-morning",
+      "file": "01-good-morning.webp",
+      "alt": "สวัสดีตอนเช้า",
+      "keywords": "morning good morning cat sun สวัสดีตอนเช้า มอร์นิ่ง"
+    },
+    {
+      "id": "02-sawasdee",
+      "file": "02-sawasdee.webp",
+      "alt": "สวัสดีครับ/ค่ะ",
+      "keywords": "hello hi sawasdee wai rabbit สวัสดี ไหว้ ขอบคุณ"
+    },
+    {
+      "id": "03-ok-thumbsup",
+      "file": "03-ok-thumbsup.webp",
+      "alt": "โอเค รับทราบ!",
+      "keywords": "ok okay thumbs up roger dog โอเค รับทราบ ได้เลย เยี่ยม"
+    },
+    {
+      "id": "04-thank-you",
+      "file": "04-thank-you.webp",
+      "alt": "ขอบคุณมากๆ ❤️",
+      "keywords": "thank you heart love capybara ขอบคุณ รัก ซึ้ง"
+    },
+    {
+      "id": "05-haha-lol",
+      "file": "05-haha-lol.webp",
+      "alt": "555 ขำกลิ้ง!",
+      "keywords": "555 lol haha laugh husky ขำ หัวเราะ ฮา"
+    },
+    {
+      "id": "06-what-shock",
+      "file": "06-what-shock.webp",
+      "alt": "อะไรวะเนี่ย!?",
+      "keywords": "what shocked omg confused owl อะไร ตกใจ งง เหวอ"
+    },
+    {
+      "id": "07-bye-bye",
+      "file": "07-bye-bye.webp",
+      "alt": "บ๊ายบายจ้า",
+      "keywords": "bye goodbye wave rabbit บ๊ายบาย ลา ก่อนนะ"
+    },
+    {
+      "id": "08-sleepy",
+      "file": "08-sleepy.webp",
+      "alt": "ง่วงไม่ไหว...",
+      "keywords": "sleepy tired yawn sloth ง่วง พัก นอน"
+    },
+    {
+      "id": "09-fighting",
+      "file": "09-fighting.webp",
+      "alt": "สู้ๆ นะ!",
+      "keywords": "fighting cheer up shiba สู้ๆ เป็นกำลังใจ"
+    },
+    {
+      "id": "10-hungry",
+      "file": "10-hungry.webp",
+      "alt": "หิวแล้ววว",
+      "keywords": "hungry food noodles panda หิว กินข้าว ก๋วยเตี๋ยว"
+    },
+    {
+      "id": "11-omw",
+      "file": "11-omw.webp",
+      "alt": "กำลังไป รอแป๊บ!",
+      "keywords": "omw running hurry penguin กำลังไป รอแป๊บ รีบ"
+    },
+    {
+      "id": "12-awesome",
+      "file": "12-awesome.webp",
+      "alt": "เยี่ยมเลย!",
+      "keywords": "awesome clap bravo otter เยี่ยม สุดยอด ปรบมือ"
+    },
+    {
+      "id": "13-crying",
+      "file": "13-crying.webp",
+      "alt": "ฮือออ 😭",
+      "keywords": "cry sad tears cat ร้องไห้ เศร้า ฮือ"
+    },
+    {
+      "id": "14-sorry",
+      "file": "14-sorry.webp",
+      "alt": "ขอโทษนะ...",
+      "keywords": "sorry apologize bow bear ขอโทษ ผิดไปแล้ว"
+    },
+    {
+      "id": "15-working",
+      "file": "15-working.webp",
+      "alt": "ปั่นงานวนไป",
+      "keywords": "work laptop coding coffee fox ทำงาน ปั่นงาน สู้ชีวิต"
+    },
+    {
+      "id": "16-good-night",
+      "file": "16-good-night.webp",
+      "alt": "ฝันดีนะ",
+      "keywords": "goodnight sleep bunny star ฝันดี ราตรีสวัสดิ์ นอน"
+    }
+  ]
+}
