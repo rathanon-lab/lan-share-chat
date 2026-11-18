@@ -3,9 +3,11 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Syncs open overlay modals/lightbox layers with browser History entries so that
- * hardware/gesture Back on Android Chrome & iOS Safari closes the topmost overlay
- * first, and when no overlay is open, triggers a root double-back exit confirmation.
+ * Syncs open overlay modals/lightbox/mobile-subtab layers with browser History entries so that
+ * hardware/gesture Back on Android Chrome & iOS Safari closes the topmost overlay first.
+ * When at the root chat layer (depth 0), arms a single gesture-backed sentinel (satisfying
+ * Chrome's History Manipulation Intervention) that notifies the user they are at the top-level
+ * root screen without looping or bouncing back to /admin.
  */
 export function useModalHistoryStack(
   closersBottomToTop: Array<() => void>,
@@ -24,17 +26,21 @@ export function useModalHistoryStack(
 
   const desiredDepth = closersBottomToTop.length;
 
-  // Arm root history sentinel upon first user gesture (satisfies Chrome History Manipulation Intervention)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const armSentinel = () => {
-      if (rootGuardArmedRef.current) return;
+      if (rootGuardArmedRef.current || pushedDepthRef.current > 0) return;
+      const st = window.history.state as { __lanRootGuard?: boolean; __lanShareModalLayer?: number } | null;
+      if (st?.__lanRootGuard || (st?.__lanShareModalLayer ?? 0) > 0) {
+        rootGuardArmedRef.current = true;
+        return;
+      }
       rootGuardArmedRef.current = true;
       window.history.pushState({ __lanRootGuard: true }, "");
     };
-    window.addEventListener("pointerdown", armSentinel, { passive: true, once: true });
-    window.addEventListener("touchstart", armSentinel, { passive: true, once: true });
-    window.addEventListener("keydown", armSentinel, { passive: true, once: true });
+    window.addEventListener("pointerdown", armSentinel, { passive: true });
+    window.addEventListener("touchstart", armSentinel, { passive: true });
+    window.addEventListener("keydown", armSentinel, { passive: true });
     return () => {
       window.removeEventListener("pointerdown", armSentinel);
       window.removeEventListener("touchstart", armSentinel);
@@ -53,8 +59,14 @@ export function useModalHistoryStack(
     } else if (desiredDepth < pushedDepthRef.current) {
       const diff = pushedDepthRef.current - desiredDepth;
       pushedDepthRef.current = desiredDepth;
-      ignoringPopRef.current += 1;
-      window.history.go(-diff);
+      const currentLayer = Number(
+        (window.history.state as { __lanShareModalLayer?: number } | null)?.__lanShareModalLayer || 0
+      );
+      if (currentLayer > 0) {
+        const stepsBack = Math.min(diff, currentLayer);
+        ignoringPopRef.current += 1;
+        window.history.go(-stepsBack);
+      }
     }
   }, [desiredDepth]);
 
@@ -77,6 +89,7 @@ export function useModalHistoryStack(
         return;
       }
 
+      rootGuardArmedRef.current = false;
       if (onRootBackRef.current) {
         onRootBackRef.current();
       }

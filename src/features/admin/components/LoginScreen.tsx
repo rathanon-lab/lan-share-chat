@@ -268,6 +268,7 @@ export function LoginScreen({
           >
             <Link
               href="/"
+              replace
               data-testid="admin-login-back-home"
               style={{
                 display: "inline-flex",

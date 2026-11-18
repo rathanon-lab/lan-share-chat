@@ -190,10 +190,14 @@ function initializeSchema(database: sqlite3.Database) {
         peakOnlineAt INTEGER DEFAULT 0,
         messageCount INTEGER DEFAULT 0,
         uploadCount INTEGER DEFAULT 0,
+        uploadBytes INTEGER DEFAULT 0,
+        egressBytes INTEGER DEFAULT 0,
         spamBlockedCount INTEGER DEFAULT 0,
         p2pBlockedCount INTEGER DEFAULT 0
       )
     `);
+    migrateColumn(database, 'daily_telemetry', 'uploadBytes', 'INTEGER DEFAULT 0');
+    migrateColumn(database, 'daily_telemetry', 'egressBytes', 'INTEGER DEFAULT 0');
 
     database.run(`
       CREATE TABLE IF NOT EXISTS hourly_telemetry (

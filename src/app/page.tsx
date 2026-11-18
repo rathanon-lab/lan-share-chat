@@ -116,6 +116,7 @@ export default function ChatApp() {
       ? Math.max(0, Math.ceil((chat.restriction.mutedUntil - chat.nowMs) / 1000))
       : 0;
   const modalClosers: Array<() => void> = [];
+  if (activeMobileTab === "peers") modalClosers.push(() => setActiveMobileTab("chat"));
   if (isProfileModalOpen) modalClosers.push(() => setIsProfileModalOpen(false));
   if (chat.webrtc.isDirectSendModalOpen) modalClosers.push(() => chat.webrtc.closeDirectSendModal());
   if (chat.webrtc.incomingRequest) modalClosers.push(() => chat.webrtc.closeReceiverModal());
@@ -126,26 +127,18 @@ export default function ChatApp() {
   if (previewFile) modalClosers.push(() => setPreviewFile(null));
 
   const handleRootBackAttempt = useCallback(() => {
-    if (activeMobileTab === "peers") {
-      setActiveMobileTab("chat");
-      window.history.pushState({ __lanRootGuard: true }, "");
-      return;
-    }
     if (exitBackConfirmUntilRef.current > Date.now()) {
-      exitBackConfirmUntilRef.current = 0;
       setShowExitConfirmToast(false);
-      window.history.back();
       return;
     }
     exitBackConfirmUntilRef.current = Date.now() + 2500;
     setShowExitConfirmToast(true);
-    window.history.pushState({ __lanRootGuard: true }, "");
     setTimeout(() => {
       if (Date.now() >= exitBackConfirmUntilRef.current) {
         setShowExitConfirmToast(false);
       }
     }, 2550);
-  }, [activeMobileTab]);
+  }, []);
 
   useModalHistoryStack(modalClosers, handleRootBackAttempt);
 
@@ -362,8 +355,8 @@ export default function ChatApp() {
                   <AlertTriangle size={15} />
                   <span>
                     {isEn
-                      ? "Press back again within 2 seconds to exit"
-                      : "กดย้อนกลับอีกครั้งภายใน 2 วินาที เพื่อออกจากหน้าเว็บ"}
+                      ? "At top-level Main Chat — swipe tab away or press Back again to leave"
+                      : "อยู่หน้าแชทหลักสูงสุดแล้ว — กด Home/ปัดแท็บ หรือกดย้อนกลับอีกครั้งเพื่อออก"}
                   </span>
                 </div>
               )}
@@ -429,6 +422,7 @@ export default function ChatApp() {
           }`}
         >
           <button
+            data-testid="mobile-tab-chat"
             onClick={() => setActiveMobileTab("chat")}
             className={`flex-1 flex flex-col items-center justify-center gap-1 p-2 rounded-xl transition-colors cursor-pointer ${
               activeMobileTab === "chat" ? "text-blue-600 bg-blue-50" : "text-gray-500"
@@ -438,6 +432,7 @@ export default function ChatApp() {
             <span className="text-[10px] font-bold">แชทส่วนรวม</span>
           </button>
           <button
+            data-testid="mobile-tab-peers"
             onClick={() => setActiveMobileTab("peers")}
             className={`flex-1 flex flex-col items-center justify-center gap-1 p-2 rounded-xl transition-colors cursor-pointer ${
               activeMobileTab === "peers" ? "text-blue-600 bg-blue-50" : "text-gray-500"

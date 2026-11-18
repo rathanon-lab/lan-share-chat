@@ -58,6 +58,12 @@ function recordHit(
   return { count: bucket.hits.length, repeatCount: bucket.repeatCount || 1, bucket };
 }
 
+export function clearSecurityBuckets() {
+  chatBuckets.clear();
+  p2pBuckets.clear();
+  httpBuckets.clear();
+}
+
 const pendingBanDisconnects = new Map<string, NodeJS.Timeout>();
 
 export function pushRestrictionState(
@@ -153,10 +159,21 @@ export async function enforceChatGuard(params: {
   const ipStat = recordHit(chatBuckets, `ip:${params.ip}`, Math.max(windowMs, 10000));
 
   const dupThreshold = settings.spamMaxDuplicates ?? 5;
-  const isBurst = devStat.count > maxMsgs || ipStat.count > maxMsgs * 3;
+  const isDevBurst = devStat.count > maxMsgs;
+  const isIpOnlyBurst = !isDevBurst && ipStat.count > maxMsgs * 3;
   const isDuplicateFlood = dupThreshold > 0 && dedupeToken.length >= 2 && devStat.repeatCount >= dupThreshold;
 
-  if (isBurst || isDuplicateFlood) {
+  if (isIpOnlyBurst && !isDuplicateFlood) {
+    incrementTelemetryCounter('spam').catch(() => {});
+    return {
+      allowed: false,
+      code: 'RATE_LIMIT',
+      retryAfterSec: settings.spamWindowSeconds,
+      message: `เครือข่ายเดียวกันส่งข้อความถี่เกินกำหนด กรุณารอสักครู่`,
+    };
+  }
+
+  if (isDevBurst || isDuplicateFlood) {
     devStat.bucket.strikes += 1;
     incrementTelemetryCounter('spam').catch(() => {});
 
@@ -246,7 +263,18 @@ export async function enforceP2pGuard(params: {
   const devStat = recordHit(p2pBuckets, `p2p-dev:${params.deviceId}`, windowMs);
   const ipStat = recordHit(p2pBuckets, `p2p-ip:${params.ip}`, windowMs);
 
-  if (devStat.count > maxOffers || ipStat.count > maxOffers * 3) {
+  const isDevP2pBurst = devStat.count > maxOffers;
+  if (!isDevP2pBurst && ipStat.count > maxOffers * 3) {
+    incrementTelemetryCounter('p2p').catch(() => {});
+    return {
+      allowed: false,
+      code: 'RATE_LIMIT',
+      retryAfterSec: 15,
+      message: `เครือข่ายเดียวกันส่งคำขอ P2P ถี่เกินไป กรุณารอสักครู่`,
+    };
+  }
+
+  if (isDevP2pBurst) {
     devStat.bucket.strikes += 1;
     incrementTelemetryCounter('p2p').catch(() => {});
 

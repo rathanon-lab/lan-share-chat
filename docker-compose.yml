@@ -8,6 +8,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - TZ=${TZ:-Asia/Bangkok}
       - PUBLIC_HOST=${PUBLIC_HOST:-}
       - PUBLIC_HTTPS_URL=${PUBLIC_HTTPS_URL:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change_me_strong_admin_password}
@@ -16,6 +17,13 @@ services:
       - MAX_P2P_FILE_SIZE_MB=${MAX_P2P_FILE_SIZE_MB:-1024}
       - MAX_CHAT_FILES_BATCH=${MAX_CHAT_FILES_BATCH:-10}
       - MIN_DISK_FREE_MB=${MIN_DISK_FREE_MB:-512}
+      - STORAGE_MAX_TOTAL_GB=${STORAGE_MAX_TOTAL_GB:-0}
+      - STORAGE_MAX_UPLOADS_GB=${STORAGE_MAX_UPLOADS_GB:-0}
+      - STORAGE_MAX_STICKERS_MB=${STORAGE_MAX_STICKERS_MB:-0}
+      - STORAGE_MAX_CACHE_MB=${STORAGE_MAX_CACHE_MB:-0}
+      - STORAGE_MAX_CHUNKS_MB=${STORAGE_MAX_CHUNKS_MB:-0}
+      - STORAGE_MAX_AVATARS_MB=${STORAGE_MAX_AVATARS_MB:-0}
+      - STORAGE_WARN_DB_MB=${STORAGE_WARN_DB_MB:-2048}
     volumes:
       # Segregated Docker Virtual Volumes (override via .env e.g. STORAGE_UPLOADS_VOL=/mnt/disk2/uploads or ./storage/uploads)
       - ${STORAGE_DB_VOL:-lan_chat_db}:/app/storage/db

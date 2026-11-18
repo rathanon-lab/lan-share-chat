@@ -10,7 +10,16 @@ import {
   uploadsDir,
   videoCacheDir,
 } from '../../src/lib/storagePaths';
-import { MIN_DISK_FREE_MB } from '../config';
+import {
+  MIN_DISK_FREE_MB,
+  STORAGE_MAX_AVATARS_MB,
+  STORAGE_MAX_CACHE_MB,
+  STORAGE_MAX_CHUNKS_MB,
+  STORAGE_MAX_STICKERS_MB,
+  STORAGE_MAX_TOTAL_GB,
+  STORAGE_MAX_UPLOADS_GB,
+  STORAGE_WARN_DB_MB,
+} from '../config';
 import type { RuntimeStorageSummary, StorageZoneStatus } from '../../src/types/chat';
 
 export interface DiskGuardResult {
@@ -143,11 +152,31 @@ function getRootDeviceId(): number | bigint | null {
   }
 }
 
+function getZoneQuotaMb(id: StorageZoneStatus['id']): number {
+  switch (id) {
+    case 'uploads':
+      return STORAGE_MAX_UPLOADS_GB > 0 ? Math.round(STORAGE_MAX_UPLOADS_GB * 1024) : 0;
+    case 'stickers':
+      return STORAGE_MAX_STICKERS_MB;
+    case 'cache':
+      return STORAGE_MAX_CACHE_MB;
+    case 'chunks':
+      return STORAGE_MAX_CHUNKS_MB;
+    case 'avatars':
+      return STORAGE_MAX_AVATARS_MB;
+    case 'db':
+      return STORAGE_WARN_DB_MB;
+    default:
+      return 0;
+  }
+}
+
 export function getRuntimeStorageReport(): RuntimeStorageSummary {
   ensureStorageZoneDirs();
   const runtime = detectRuntimeEnvironment();
   const mountPoints = readLinuxMountPoints();
   const rootDev = getRootDeviceId();
+  let totalUsedMbSum = 0;
 
   const zones: StorageZoneStatus[] = ZONE_DEFS.map((zone) => {
     let writable = false;
@@ -160,6 +189,12 @@ export function getRuntimeStorageReport(): RuntimeStorageSummary {
 
     const fsInfo = statFsMetrics(zone.dir);
     const usedMb = Number((computeDirSizeBytes(zone.dir) / (1024 * 1024)).toFixed(2));
+    totalUsedMbSum += usedMb;
+
+    const quotaMb = getZoneQuotaMb(zone.id);
+    const quotaPercent =
+      quotaMb > 0 ? Math.min(100, Math.round((usedMb / quotaMb) * 100)) : fsInfo.usedPercent;
+    const quotaExceeded = quotaMb > 0 && usedMb >= quotaMb;
 
     let distinctMount = false;
     const normalizedPosix = zone.dir.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
@@ -183,6 +218,9 @@ export function getRuntimeStorageReport(): RuntimeStorageSummary {
       freeMb: fsInfo.freeMb,
       totalGb: fsInfo.totalGb,
       distinctMount,
+      quotaMb,
+      quotaPercent,
+      quotaExceeded,
     };
   });
 
@@ -197,13 +235,50 @@ export function getRuntimeStorageReport(): RuntimeStorageSummary {
     diskTotalGb: primaryFs.totalGb,
     diskUsedPercent: primaryFs.usedPercent,
     isolatedVolumesCount: zones.filter((z) => z.distinctMount).length,
+    maxTotalGb: STORAGE_MAX_TOTAL_GB,
+    totalUsedMb: Number(totalUsedMbSum.toFixed(2)),
     zones,
   };
 }
 
-export function checkUploadDiskGuard(incomingBytes = 0): DiskGuardResult {
+export function enforceCacheLruQuota(incomingBytes = 0): void {
+  if (STORAGE_MAX_CACHE_MB <= 0) return;
+  try {
+    ensureStorageZoneDirs();
+    const limitBytes = STORAGE_MAX_CACHE_MB * 1024 * 1024;
+    const entries = fs.readdirSync(videoCacheDir, { withFileTypes: true });
+    const files: Array<{ fullPath: string; size: number; mtimeMs: number }> = [];
+    let totalBytes = 0;
+
+    for (const entry of entries) {
+      if (!entry.isFile() || entry.name.includes('.tmp.')) continue;
+      const fullPath = path.join(videoCacheDir, entry.name);
+      try {
+        const st = fs.statSync(fullPath);
+        totalBytes += st.size;
+        files.push({ fullPath, size: st.size, mtimeMs: st.mtimeMs });
+      } catch {}
+    }
+
+    if (totalBytes + incomingBytes <= limitBytes) return;
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const f of files) {
+      if (totalBytes + incomingBytes <= limitBytes) break;
+      try {
+        fs.unlinkSync(f.fullPath);
+        totalBytes -= f.size;
+      } catch {}
+    }
+  } catch {}
+}
+
+export function checkUploadDiskGuard(
+  incomingBytes = 0,
+  targetZone: StorageZoneStatus['id'] = 'uploads'
+): DiskGuardResult {
   ensureStorageZoneDirs();
-  const incomingMb = Math.max(0, Number(incomingBytes) || 0) / (1024 * 1024);
+  const safeIncomingBytes = Math.max(0, Number(incomingBytes) || 0);
+  const incomingMb = safeIncomingBytes / (1024 * 1024);
   const zonesToCheck = [uploadsDir, dbDir, chunkStagingDir];
   let lowestFreeMb = Number.POSITIVE_INFINITY;
 
@@ -214,23 +289,56 @@ export function checkUploadDiskGuard(incomingBytes = 0): DiskGuardResult {
     }
   }
 
-  if (!Number.isFinite(lowestFreeMb)) {
-    return { ok: true, freeMb: 0, minRequiredMb: MIN_DISK_FREE_MB };
+  if (Number.isFinite(lowestFreeMb)) {
+    const projectedFreeMb = lowestFreeMb - incomingMb;
+    if (projectedFreeMb < MIN_DISK_FREE_MB) {
+      return {
+        ok: false,
+        freeMb: Math.max(0, Math.round(lowestFreeMb)),
+        minRequiredMb: MIN_DISK_FREE_MB,
+        error: `พื้นที่ว่างบน Storage ไม่เพียงพอ (เหลือ ${Math.round(lowestFreeMb)} MB, ต้องการขั้นต่ำอย่างน้อย ${MIN_DISK_FREE_MB} MB)`,
+      };
+    }
   }
 
-  const projectedFreeMb = lowestFreeMb - incomingMb;
-  if (projectedFreeMb < MIN_DISK_FREE_MB) {
-    return {
-      ok: false,
-      freeMb: Math.max(0, Math.round(lowestFreeMb)),
-      minRequiredMb: MIN_DISK_FREE_MB,
-      error: `พื้นที่ว่างบน Storage ไม่เพียงพอ (เหลือ ${Math.round(lowestFreeMb)} MB, ต้องการขั้นต่ำอย่างน้อย ${MIN_DISK_FREE_MB} MB)`,
-    };
+  const resolvedFreeMb = Number.isFinite(lowestFreeMb) ? Math.round(lowestFreeMb) : 0;
+
+  if (STORAGE_MAX_TOTAL_GB > 0) {
+    const maxTotalBytes = STORAGE_MAX_TOTAL_GB * 1024 * 1024 * 1024;
+    const totalUsedBytes = ZONE_DEFS.reduce((sum, z) => sum + computeDirSizeBytes(z.dir), 0);
+    if (totalUsedBytes + safeIncomingBytes > maxTotalBytes) {
+      return {
+        ok: false,
+        freeMb: resolvedFreeMb,
+        minRequiredMb: MIN_DISK_FREE_MB,
+        error: `พื้นที่รวมทุกโซนเกินเพดาน STORAGE_MAX_TOTAL_GB=${STORAGE_MAX_TOTAL_GB} GB กรุณาลบไฟล์เก่าหรือเพิ่มเพดานใน .env`,
+      };
+    }
+  }
+
+  if (targetZone !== 'db' && targetZone !== 'cache') {
+    const zoneQuotaMb = getZoneQuotaMb(targetZone);
+    if (zoneQuotaMb > 0) {
+      const zoneDef = ZONE_DEFS.find((z) => z.id === targetZone);
+      if (zoneDef) {
+        const zoneUsedBytes = computeDirSizeBytes(zoneDef.dir);
+        const zoneLimitBytes = zoneQuotaMb * 1024 * 1024;
+        if (zoneUsedBytes + safeIncomingBytes > zoneLimitBytes) {
+          const usedMb = (zoneUsedBytes / (1024 * 1024)).toFixed(1);
+          return {
+            ok: false,
+            freeMb: resolvedFreeMb,
+            minRequiredMb: MIN_DISK_FREE_MB,
+            error: `โควตาพื้นที่โซน ${zoneDef.label} เต็มแล้ว (ใช้ไป ${usedMb} / ${zoneQuotaMb} MB)`,
+          };
+        }
+      }
+    }
   }
 
   return {
     ok: true,
-    freeMb: Math.round(lowestFreeMb),
+    freeMb: resolvedFreeMb,
     minRequiredMb: MIN_DISK_FREE_MB,
   };
 }

@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { IncomingMessage, ServerResponse } from 'http';
 import { decryptMediaToken } from '../../src/lib/crypto';
+import { recordMediaEgressBytes } from '../../src/lib/db';
+import { sanitizeDownloadFileName } from '../../src/lib/fileNameGuard';
 import { isAuthorizedAdminToken, jsonErr, jsonOk, parseJsonBody } from '../state';
 import { resolveMediaFilePath } from './mediaRoutes';
 import { ZipSourceEntry, streamFilesAsZip } from '../utils/zipStream';
@@ -60,7 +62,7 @@ function resolveEntriesFromTokens(rawTokens: unknown): { entries?: ZipSourceEntr
       if (!stat.isFile()) continue;
       entries.push({
         filePath,
-        fileName: payload.n || payload.f,
+        fileName: sanitizeDownloadFileName(payload.n || payload.f),
         fileSize: stat.size,
         mtimeMs: stat.mtimeMs,
       });
@@ -142,6 +144,8 @@ export async function handleDownloadZipGet(
   }
 
   try {
+    const totalZipBytes = record.entries.reduce((sum, e) => sum + e.fileSize, 0);
+    recordMediaEgressBytes(totalZipBytes).catch(() => {});
     await streamFilesAsZip(res, record.entries);
   } catch {
     if (!res.headersSent) jsonErr(res, 500, 'Failed to stream ZIP archive');
@@ -163,6 +167,8 @@ export async function handleDownloadZipPost(req: IncomingMessage, res: ServerRes
   const zipName = sanitizeZipDownloadName(body?.zipName);
   sendZipHeaders(res, zipName);
   try {
+    const totalZipBytes = resolved.entries.reduce((sum, e) => sum + e.fileSize, 0);
+    recordMediaEgressBytes(totalZipBytes).catch(() => {});
     await streamFilesAsZip(res, resolved.entries);
   } catch {
     if (!res.headersSent) jsonErr(res, 500, 'Failed to stream ZIP archive');

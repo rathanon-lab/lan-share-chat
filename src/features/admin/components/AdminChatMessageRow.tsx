@@ -310,7 +310,7 @@ export function AdminChatMessageRow({
                           onClick={() => onPreviewFile({ fileName: att.fileName, fileSize: att.fileSize, mimeType: att.mimeType, mediaToken: att.mediaToken })}
                           style={{ cursor: "pointer", width: "100%", height: "132px", borderRadius: "8px", overflow: "hidden", background: "#E2E8F0", marginBottom: "6px" }}
                         >
-                          <SecureImage token={att.mediaToken} alt={att.fileName} fileName={att.fileName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          <SecureImage token={att.mediaToken} thumbnail alt={att.fileName} fileName={att.fileName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                         </div>
                       )}
                       {isVid && att.mediaToken && (

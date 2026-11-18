@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { validateUploadFileName } from "@/lib/fileNameGuard";
 import { pickSupportedRecorderMime, transcodeAudioBlobToMp3 } from "@/lib/voiceRecorder";
 
 export interface StagedAdminAttachment {
@@ -170,6 +171,11 @@ export function useAdminComposerMedia(params: {
     if (selected.length === 0) return;
     const maxBytes = maxUploadMb * 1024 * 1024;
     const valid = selected.filter((f) => {
+      const nameCheck = validateUploadFileName(f.name);
+      if (!nameCheck.valid) {
+        notify(nameCheck.reason || `ชื่อไฟล์ "${f.name}" ไม่ถูกต้อง`, "error");
+        return false;
+      }
       if (f.size > maxBytes) {
         notify(`ข้ามไฟล์ "${f.name}" เนื่องจากมีขนาดเกิน ${maxUploadMb}MB`, "error");
         return false;

@@ -1,6 +1,6 @@
 # Architecture & Security Model
 
-Technical breakdown of **LAN Share Chat v3.0** modular internals and cross-repository integration.
+Technical breakdown of **LAN Share Chat v3.1.0** modular internals and cross-repository integration.
 
 ---
 
@@ -19,14 +19,14 @@ lan-share-chat/
 │   │   ├── adminRoutes.ts                  # /api/admin/* settings, overview, backup, reset & password-gated log clear
 │   │   ├── adminModerationRoutes.ts        # /api/admin/device/* mute/ban/IP-ban/rename & alert resolution
 │   │   ├── adminStickersRoutes.ts          # /api/admin/stickers/* import, batch visibility/delete & image replace
-│   │   ├── mediaRoutes.ts                  # AES-256-GCM Vault, HTTP 206 streaming & 2 MB chunked upload assembly
+│   │   ├── mediaRoutes.ts                  # AES-256-GCM Vault, NIO POST /api/media/thumb queue, HTTP 206 streaming & 2 MB chunked assembly
 │   │   ├── mediaZipRoutes.ts               # Streaming multi-file ZIP archive tickets & downloads
 │   │   └── userRoutes.ts                   # /api/config, /api/stickers, /api/profile/avatar, /api/messages/*
 │   ├── socket/
-│   │   └── registerHandlers.ts             # Session policy, capacity guard, chat, collages, read receipts & WebRTC
+│   │   └── registerHandlers.ts             # Session policy, capacity guard, P2P 112-char guard, chat, collages, read receipts & WebRTC
 │   └── utils/
-│       ├── ffmpegCompat.ts                 # Read-only .env/FFmpeg probe & lazy H.265 -> H.264 preview cache
-│       ├── storageRuntime.ts               # Docker vs Standalone detection, 6-zone probe, ENOSPC disk guard & EXDEV move
+│       ├── ffmpegCompat.ts                 # Bounded FFmpeg worker queue, .env probe & lazy H.265 -> H.264 preview cache
+│       ├── storageRuntime.ts               # Docker vs Standalone detection, 6-zone probe, per-zone quotas, LRU eviction & ENOSPC disk guard
 │       └── zipStream.ts                    # On-the-fly ZIP stream builder
 ├── tools/
 │   └── loadgen-docker/                     # Companion Docker Load Generator & Stress-Test Studio (port 3099)
@@ -46,14 +46,14 @@ lan-share-chat/
     │   ├── p2p/                            # useWebRTCTransfer hook, P2PSendModal, P2PReceiveModal
     │   └── admin/                          # LoginScreen, AdminOverviewTab, AdminChatTab, StickerManagerTab, StickerItemEditModal, AdminEnvTab, AdminSettingsTab
     ├── components/                         # ZoomableMediaStage, UserAvatar, ProfileModal, AvatarCropModal
-    └── lib/                                # db/* (modular SQLite repos), crypto.ts, storagePaths.ts, stickerStore.ts, stickerMeta.ts, secureMedia.tsx, filePreviewer.tsx
+    └── lib/                                # db/* (modular SQLite repos + traffic telemetry), fileNameGuard.ts, crypto.ts, storagePaths.ts, stickerStore.ts, stickerMeta.ts, secureMedia.tsx, filePreviewer.tsx
 ```
 
 ---
 
 ## 2. Cross-Repository Integration with `Server-Lab-A2`
 
-`LAN Share Chat v3.0` is architected to decouple application logic from edge network infrastructure:
+`LAN Share Chat v3.1.0` is architected to decouple application logic from edge network infrastructure:
 - **[`Server-Lab-A2`](../../Server-Lab-A2)** is a standalone Infrastructure-as-Code (IaC) repository (Technitium DNS Server, Nginx Proxy Manager, MariaDB, Uptime Kuma, Dozzle, and Internal Root CA scripts) that does **not** bundle or build `lan-share-chat` source code.
 - Over the LAN (`192.168.1.0/24`), **Technitium DNS** resolves `chat.lab.lan` (and optional `bot.lab.lan`) to the `Server-Lab-A2` host (`192.168.1.5`).
 - **Nginx Proxy Manager** terminates `365`-day wildcard HTTPS (`*.lab.lan`), enables WebSocket upgrades (`Upgrade: websocket`) for Socket.IO, applies a built-in `client_max_body_size 2000m` (`2 GB`) ceiling that accommodates `lan-share-chat`'s `1 GB` (`1024 MB`) chunked uploads (`2 MB` per chunk), and forwards requests to `http://host.docker.internal:3000` (or `http://<LAN_IP>:3000`).

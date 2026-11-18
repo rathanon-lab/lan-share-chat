@@ -39,6 +39,7 @@ import {
   getLocalIp,
   getPublicHost,
   hasAdminMention,
+  isAuthorizedAdminToken,
   jsonErr,
   jsonOk,
   parseJsonBody,
@@ -50,6 +51,7 @@ import {
   handleChunkUpload,
   handleCreateStreamTicket,
   handleEncryptedMediaFetch,
+  handleEncryptedMediaThumb,
   handleStreamGet,
   processMultiUpload,
 } from './mediaRoutes';
@@ -198,16 +200,29 @@ export async function handlePublicAndUserApi(
     return true;
   }
 
-  // Encrypted media vault endpoints (with HTTP flood protection)
+  // Encrypted media vault endpoints (with HTTP flood protection; authenticated Admins bypass grid-view rate limits)
+  const isAdminCaller = isAuthorizedAdminToken((req.headers['x-admin-token'] as string) || '');
+  if (pathname === '/api/media/thumb' && req.method === 'POST') {
+    if (!isAdminCaller) {
+      const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-thumb', maxHits: 600, windowMs: 60 * 1000 });
+      if (!rl.allowed) return jsonErr(res, 429, 'Too many thumbnail requests'), true;
+    }
+    await handleEncryptedMediaThumb(req, res);
+    return true;
+  }
   if (pathname === '/api/media/fetch' && req.method === 'POST') {
-    const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-fetch', maxHits: 240, windowMs: 60 * 1000 });
-    if (!rl.allowed) return jsonErr(res, 429, 'Too many media requests'), true;
+    if (!isAdminCaller) {
+      const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-fetch', maxHits: 360, windowMs: 60 * 1000 });
+      if (!rl.allowed) return jsonErr(res, 429, 'Too many media requests'), true;
+    }
     await handleEncryptedMediaFetch(req, res);
     return true;
   }
   if (pathname === '/api/media/stream-ticket' && req.method === 'POST') {
-    const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-stream-ticket', maxHits: 120, windowMs: 60 * 1000 });
-    if (!rl.allowed) return jsonErr(res, 429, 'Too many stream requests'), true;
+    if (!isAdminCaller) {
+      const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-stream-ticket', maxHits: 240, windowMs: 60 * 1000 });
+      if (!rl.allowed) return jsonErr(res, 429, 'Too many stream requests'), true;
+    }
     await handleCreateStreamTicket(req, res);
     return true;
   }
@@ -216,8 +231,10 @@ export async function handlePublicAndUserApi(
     return true;
   }
   if (pathname === '/api/media/zip-ticket' && req.method === 'POST') {
-    const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-zip-ticket', maxHits: 40, windowMs: 60 * 1000 });
-    if (!rl.allowed) return jsonErr(res, 429, 'Too many zip requests'), true;
+    if (!isAdminCaller) {
+      const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-zip-ticket', maxHits: 40, windowMs: 60 * 1000 });
+      if (!rl.allowed) return jsonErr(res, 429, 'Too many zip requests'), true;
+    }
     await handleCreateZipTicket(req, res);
     return true;
   }
@@ -226,8 +243,10 @@ export async function handlePublicAndUserApi(
     return true;
   }
   if (pathname === '/api/media/download-zip' && req.method === 'POST') {
-    const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-download-zip', maxHits: 30, windowMs: 60 * 1000 });
-    if (!rl.allowed) return jsonErr(res, 429, 'Too many zip requests'), true;
+    if (!isAdminCaller) {
+      const rl = checkHttpRateLimit({ ip: resolveClientIp(req), bucketName: 'media-download-zip', maxHits: 30, windowMs: 60 * 1000 });
+      if (!rl.allowed) return jsonErr(res, 429, 'Too many zip requests'), true;
+    }
     await handleDownloadZipPost(req, res);
     return true;
   }

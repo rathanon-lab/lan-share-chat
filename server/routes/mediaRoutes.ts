@@ -15,6 +15,7 @@ import {
   getSystemSettings,
   incrementTelemetryCounter,
   logActivity,
+  recordMediaEgressBytes,
   saveUploadedFile,
 } from '../../src/lib/db';
 import {
@@ -25,6 +26,7 @@ import {
   verifyStreamTicket,
 } from '../../src/lib/crypto';
 import { parseDevicePlatform } from '../../src/lib/deviceMeta';
+import { sanitizeDownloadFileName, validateUploadFileName } from '../../src/lib/fileNameGuard';
 import { checkUploadDiskGuard, moveFileAcrossZones } from '../utils/storageRuntime';
 import {
   isAuthorizedAdminToken,
@@ -35,7 +37,7 @@ import {
   saveAndBroadcastMessage,
 } from '../state';
 import { enforceChatGuard } from '../security';
-import { getOrCreateCompatPreviewVideo } from '../utils/ffmpegCompat';
+import { getOrCreateCompatPreviewVideo, getOrCreateMediaThumbnail } from '../utils/ffmpegCompat';
 
 export function resolveMediaFilePath(storedName: string): string | null {
   const safeStoredName = path.basename(storedName);
@@ -60,7 +62,7 @@ export function streamFileWithRange(
     'Cache-Control': 'private, max-age=3600',
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; sandbox",
-    'X-Original-Filename': encodeURIComponent(originalName),
+    'X-Original-Filename': encodeURIComponent(sanitizeDownloadFileName(originalName)),
   };
 
   if (stat.size === 0) {
@@ -98,6 +100,7 @@ export function streamFileWithRange(
     return;
   }
 
+  recordMediaEgressBytes(end - start + 1).catch(() => {});
   const stream = fs.createReadStream(filePath, { start, end });
   stream.on('error', () => {
     if (!res.headersSent) jsonErr(res, 500, 'Failed to read media file');
@@ -154,6 +157,51 @@ export async function handleEncryptedMediaFetch(req: IncomingMessage, res: Serve
     return jsonErr(res, 403, 'Invalid or tampered media token');
   }
   return streamMediaPayload(req, res, payload);
+}
+
+export async function handleEncryptedMediaThumb(req: IncomingMessage, res: ServerResponse) {
+  const deviceId = (req.headers['x-device-id'] as string) || '';
+  const adminToken = (req.headers['x-admin-token'] as string) || '';
+  if (!deviceId && !isAuthorizedAdminToken(adminToken)) {
+    return jsonErr(res, 401, 'Missing device or admin authentication header');
+  }
+
+  const body = await parseJsonBody(req);
+  const token = body?.token;
+  if (!token || typeof token !== 'string') {
+    return jsonErr(res, 400, 'Missing encrypted media token');
+  }
+
+  const payload = decryptMediaToken(token);
+  if (!payload) {
+    return jsonErr(res, 403, 'Invalid or tampered media token');
+  }
+
+  const safeStoredName = path.basename(payload.f);
+  const filePath = resolveMediaFilePath(safeStoredName);
+  if (!filePath) {
+    return jsonErr(res, 404, 'Media file not found');
+  }
+
+  const mime = String(payload.m || '').toLowerCase();
+  const ext = path.extname(filePath).toLowerCase();
+  const isVideo = mime.startsWith('video/') || /\.(mp4|m4v|mov|avi|mkv|webm)$/i.test(ext);
+  const isImage = mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/i.test(ext);
+  if (!isVideo && !isImage) {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const thumbPath = await getOrCreateMediaThumbnail(filePath, safeStoredName, isVideo);
+  if (!thumbPath) {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const thumbContentType = thumbPath.endsWith('.jpg') ? 'image/jpeg' : payload.m || 'image/jpeg';
+  return streamFileWithRange(req, res, thumbPath, thumbContentType, payload.n || safeStoredName);
 }
 
 export async function handleCreateStreamTicket(req: IncomingMessage, res: ServerResponse) {
@@ -288,6 +336,17 @@ export async function processMultiUpload(
             if (!decoded.includes('\ufffd')) originalName = decoded;
           } catch {}
 
+          const nameCheck = validateUploadFileName(originalName);
+          if (!nameCheck.valid) {
+            for (const f of uploadedFiles) {
+              try {
+                if (f.path && fs.existsSync(f.path)) fs.unlinkSync(f.path);
+              } catch {}
+            }
+            if (!res.headersSent) jsonErr(res, 400, nameCheck.reason || 'Invalid file name');
+            return finish(true);
+          }
+
           const fileRecordId = await saveUploadedFile({
             sender: opts.senderName,
             deviceId: opts.deviceId,
@@ -337,9 +396,9 @@ export async function processMultiUpload(
         };
 
         const { savedId } = await saveAndBroadcastMessage(msg, opts.deviceId);
-        incrementTelemetryCounter('upload').catch(() => {});
-
         const totalBytes = attachments.reduce((sum, a) => sum + a.fileSize, 0);
+        incrementTelemetryCounter('upload', attachments.length, totalBytes).catch(() => {});
+
         const uaMeta = parseDevicePlatform(String(req.headers['user-agent'] || ''));
         await logActivity(
           opts.logAction,
@@ -443,14 +502,26 @@ export async function handleChunkUpload(req: IncomingMessage, res: ServerRespons
       jsonErr(res, 400, 'Invalid chunk upload metadata');
       return;
     }
+    const nameCheck = validateUploadFileName(fileName);
+    if (!nameCheck.valid) {
+      jsonErr(res, 400, nameCheck.reason || 'Invalid file name');
+      return;
+    }
     if (totalSize > MAX_CHAT_FILE_BYTES) {
       jsonErr(res, 413, `File "${fileName}" exceeds limit of ${MAX_CHAT_FILE_SIZE_MB}MB`);
       return;
     }
-    const diskCheck = checkUploadDiskGuard(chunkIndex === 0 ? totalSize : 0);
+    const diskCheck = checkUploadDiskGuard(chunkIndex === 0 ? totalSize : 0, 'uploads');
     if (!diskCheck.ok) {
       jsonErr(res, 507, diskCheck.error || 'Insufficient storage space');
       return;
+    }
+    if (chunkIndex === 0) {
+      const chunkZoneCheck = checkUploadDiskGuard(totalSize, 'chunks');
+      if (!chunkZoneCheck.ok) {
+        jsonErr(res, 507, chunkZoneCheck.error || 'Chunk staging storage quota exceeded');
+        return;
+      }
     }
 
     const buf = await readBinaryChunk(req);
@@ -597,9 +668,9 @@ export async function handleChunkComplete(req: IncomingMessage, res: ServerRespo
   };
 
   const { savedId } = await saveAndBroadcastMessage(msg, deviceId);
-  incrementTelemetryCounter('upload').catch(() => {});
-
   const totalBytes = attachments.reduce((sum, a) => sum + a.fileSize, 0);
+  incrementTelemetryCounter('upload', attachments.length, totalBytes).catch(() => {});
+
   const uaMeta = parseDevicePlatform(String(req.headers['user-agent'] || ''));
   await logActivity(
     isAdminReq ? 'ADMIN_UPLOAD_FILE' : 'UPLOAD_FILE',

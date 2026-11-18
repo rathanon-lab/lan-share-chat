@@ -18,6 +18,7 @@ import {
   resolveFallbackAvatarForName,
 } from '../src/lib/avatars';
 import { ADMIN_PASSWORD, avatarsDir } from './config';
+import { checkUploadDiskGuard } from './utils/storageRuntime';
 
 export const SERVER_STARTED_AT = Date.now();
 export const clients = new Map<string, any>();
@@ -70,6 +71,10 @@ export function saveBase64AvatarToStorage(prefix: string, imageDataUrl: string):
   const buf = Buffer.from(match[2], 'base64');
   if (buf.length === 0 || buf.length > 700 * 1024) {
     throw new Error('ขนาดรูปโปรไฟล์ที่ตัดแล้วต้องไม่เกิน 700KB');
+  }
+  const diskCheck = checkUploadDiskGuard(buf.length, 'avatars');
+  if (!diskCheck.ok) {
+    throw new Error(diskCheck.error || 'พื้นที่จัดเก็บรูปโปรไฟล์เต็มแล้ว');
   }
   const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'user';
   const fileName = `${safePrefix}_${Date.now()}.${ext}`;

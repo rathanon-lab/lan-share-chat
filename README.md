@@ -1,6 +1,6 @@
-# LAN Share Chat v3.0
+# LAN Share Chat v3.1.0
 
-> High-speed LAN group workspace featuring **Unified Cross-OS Twemoji (SVG)**, a **Shared-Room Sticker System (16 Built-In AI Stickers + Dual-Mode Pre-Send Preview + Interactive Sticker Collage Studio + Admin Pack Manager)**, **Direct WebRTC P2P transfer with automatic ACK-controlled Secure Relay fallback**, **1 GB (`1024 MB`) chunked uploads driven by `.env` Single Source of Truth**, **AES-256-GCM Encrypted Media Vault**, **Live Privacy-First Read Receipts (`ส่งแล้ว` / `อ่านแล้ว`)**, **Admin Overview Telemetry & 9-Tab Governance Console**, **Anti-Spam / Sticker Flood & P2P Offer Protection with Zero-Content Privacy**, **Device + IP Moderation, Session Conflict Policies, Room Capacity Governance, Public Chat Privacy Blur**, and **Bilingual (`TH` / `EN`) + Dark Mode + Ultrawide Adaptive UI**.
+> High-speed LAN group workspace featuring **Netflix NIO Media Grid & Bounded FFmpeg Thumbnail Queue (`POST /api/media/thumb`)**, **24-Card Windowed Infinite Scroll (`0` raw `<video>` tags in grids)**, **Cross-Platform `112`-Char Filename Guard (`fileNameGuard.ts`)**, **Unified Cross-OS Twemoji (SVG)**, a **Shared-Room Sticker System (16 Built-In AI Stickers + Dual-Mode Pre-Send Preview + Interactive Sticker Collage Studio + Admin Pack Manager)**, **Direct WebRTC P2P transfer with automatic ACK-controlled Secure Relay fallback**, **1 GB (`1024 MB`) chunked uploads driven by `.env` Single Source of Truth**, **AES-256-GCM Encrypted Media Vault**, **Daily Inbound/Outbound Traffic Telemetry (`uploadBytes` / `egressBytes`) & Live Read Receipts (`ส่งแล้ว` / `อ่านแล้ว`)**, **Per-Zone Storage Quotas with Auto-LRU Eviction (`STORAGE_MAX_*`)**, and **Bilingual (`TH` / `EN`) + Dark Mode + Ultrawide Adaptive UI + Mobile Root Back-Guard**.
 
 [![Next.js 16](https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -45,10 +45,10 @@
 - **Direct WebRTC P2P + Automatic Secure Relay:** Transfer files directly between LAN peers (`16 KB` WebRTC DataChannel chunks with `64 KB` backpressure threshold) with automatic 3.5s failover to ACK-controlled Socket.IO Secure Relay (`32 KB` chunks).
 - **Single Source of Truth Limits (`.env` -> `GET /api/config`):** Configure `MAX_CHAT_FILE_SIZE_MB` and `MAX_P2P_FILE_SIZE_MB` (default `1024 MB` / `1 GB`) in `.env`; files larger than `2 MB` or multi-file batches upload via `2 MB` binary chunks (`POST /api/upload/chunk`).
 - **20+1 Circular Avatar Pack & Cropper:** Assigns unused circular animal presets automatically (`public/avatars/*.webp`) and includes pan/zoom circular cropping (`POST /api/profile/avatar`). Admins exclusively hold `admin-special.webp` and `adminRingColor`.
-- **AES-256-GCM Vault + HTTP `206` Streaming + Rich Previews:** Blocks raw static `/uploads/*` access (`HTTP 403`), streams video/audio via 15-minute expiring byte-range tickets (with optional lazy FFmpeg `H.265/HEVC -> H.264` preview caching in `storage/video-cache/`), and previews `PDF`, `DOCX`, `Markdown`, `ZIP`, `HEIC`, and XSS-isolated code/HTML in memory.
+- **AES-256-GCM Vault + Netflix NIO Thumbnail Queue (`POST /api/media/thumb`) + Rich Previews:** Blocks raw static `/uploads/*` access (`HTTP 403`), generates `<= 360px` JPEG thumbnails via a bounded FFmpeg worker queue (`MAX_FFMPEG_WORKERS <= 4`) with in-flight deduplication and 6-slot client concurrency (`0` `<video>` elements rendered in grids), fixes per-token `H.265/HEVC -> H.264` fallback in `CustomVideoPlayer`, enforces a cross-platform `<= 112`-char `fileNameGuard` across sender/HTTP/P2P/download layers, and previews `PDF`, `DOCX`, `Markdown`, `ZIP`, `HEIC`, and XSS-isolated code/HTML in memory.
 
 ### 9-Tab Admin Governance, Security & Telemetry Console (`/admin`)
-1. **`ภาพรวมระบบ` (Overview Dashboard):** Live server uptime, active/online peer count, 24-hour today peak-concurrency bar chart (`hourly_telemetry`), and 30-day peak/message/upload/spam summary (`daily_telemetry`) — storing only anonymous aggregate counts (`0` PII).
+1. **`ภาพรวมระบบ` (Overview Dashboard):** Live server uptime, active/online peer count, 24-hour today peak-concurrency bar chart (`hourly_telemetry`), and 30-day peak/message/per-file-upload/`uploadBytes`/`egressBytes`/spam summary (`daily_telemetry`) — storing only anonymous aggregate counts (`0` PII).
 2. **`ห้องแชท` (Chat Moderation):** Messenger-style moderation feed with Spotlight Hold (`adminHoldActive`), Room Freeze (`chatLocked`), Public Chat Privacy Blur (`chatBlurred`), checkbox multi-select batch delete (`POST /api/admin/messages/batch-delete`), per-user **`กวาดสแปม`** (`15 นาทีล่าสุด` / `ทั้งหมดของคนนี้`), inline **`Mute / ปลด Mute`** & **`Ban / ปลดแบน`**, and clickable video poster modals.
 3. **`แจ้งเตือน (@admin)` (Admin Alerts):** Real-time alerts for `@admin` / `#help` mentions, post-window delete requests, and automatic `security_spam` incidents.
 4. **`ไฟล์อัปโหลด` (Visual Media Vault):** Grid/List switcher, category filters, inline encrypted previews, and multi-select batch delete (`POST /api/admin/files/batch-delete`).
@@ -63,7 +63,7 @@
 ## System Architecture & Cross-Repository Integration
 
 > **Cross-Repository Architecture (`lan-share-chat` ↔ `Server-Lab-A2`):**  
-> `LAN Share Chat v3.0` is an independent application repository that can run standalone on any machine (`http://localhost:3000`) **or** integrate over the LAN with **[`Server-Lab-A2`](../Server-Lab-A2)**—our standalone Infrastructure-as-Code (Docker Compose, Technitium Split-Horizon DNS, Nginx Proxy Manager, Internal PKI, Uptime Kuma, and Dozzle) repository. `Server-Lab-A2` does **not** bundle or build `lan-share-chat` inside its repo; instead, Technitium DNS resolves `chat.lab.lan` (and optional LoadGen `bot.lab.lan`) to the `Server-Lab-A2` host (`192.168.1.5`), where Nginx Proxy Manager terminates `365`-day wildcard TLS (`*.lab.lan`), upgrades `Socket.IO` WebSockets, enforces a `2000m` (`2 GB`) body ceiling for `1 GB` chunked uploads, and proxies traffic to `lan-share-chat:3000`.
+> `LAN Share Chat v3.1.0` is an independent application repository that can run standalone on any machine (`http://localhost:3000`) **or** integrate over the LAN with **[`Server-Lab-A2`](../Server-Lab-A2)**—our standalone Infrastructure-as-Code (Docker Compose, Technitium Split-Horizon DNS, Nginx Proxy Manager, Internal PKI, Uptime Kuma, and Dozzle) repository. `Server-Lab-A2` does **not** bundle or build `lan-share-chat` inside its repo; instead, Technitium DNS resolves `chat.lab.lan` (and optional LoadGen `bot.lab.lan`) to the `Server-Lab-A2` host (`192.168.1.5`), where Nginx Proxy Manager terminates `365`-day wildcard TLS (`*.lab.lan`), upgrades `Socket.IO` WebSockets, enforces a `2000m` (`2 GB`) body ceiling for `1 GB` chunked uploads, and proxies traffic to `lan-share-chat:3000`.
 
 ```mermaid
 flowchart LR
@@ -77,7 +77,7 @@ flowchart LR
         NPM["Nginx Proxy Manager (:443)\nTLS + WSS + 2000m Body Ceiling"]
     end
 
-    subgraph Server["LAN Share Chat v3.0 Custom Server (server.ts + server/)"]
+    subgraph Server["LAN Share Chat v3.1.0 Custom Server (server.ts + server/)"]
         API["REST Routers (server/routes/* — user, media, admin, stickers)"]
         NEXT["Next.js 16.2 App Router (loading.tsx + error.tsx)"]
         SEC["Security & Rate Guard (server/security.ts — Anti-Spam, Ban/IP, 429 Auth)"]

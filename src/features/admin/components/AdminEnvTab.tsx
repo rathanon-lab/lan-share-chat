@@ -113,7 +113,11 @@ export function AdminEnvTab({
                 </div>
                 <div style={{ fontSize: "12px", color: FB.textSecondary, marginTop: "2px" }}>
                   Node {runtime.nodeVersion} · คงเหลือ {runtime.diskFreeMb.toLocaleString()} MB / {runtime.diskTotalGb} GB
-                  {" "}(ใช้แล้ว {runtime.diskUsedPercent}% · เกณฑ์ป้องกันดิสก์เต็ม ≥ {runtime.minDiskFreeMb} MB)
+                  {" "}(ใช้แล้ว {runtime.diskUsedPercent}% · เกณฑ์ป้องกันดิสก์เต็ม ≥ {runtime.minDiskFreeMb} MB
+                  {runtime.maxTotalGb && runtime.maxTotalGb > 0
+                    ? ` · เพดานรวม ${runtime.maxTotalGb} GB (ใช้ไป ${runtime.totalUsedMb?.toLocaleString() ?? 0} MB)`
+                    : ""}
+                  )
                 </div>
               </div>
             </div>
@@ -137,55 +141,68 @@ export function AdminEnvTab({
               gap: "10px",
             }}
           >
-            {runtime.zones.map((zone) => (
-              <div
-                key={zone.id}
-                data-testid={`storage-zone-${zone.id}`}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  background: "#F8FAFC",
-                  border: `1px solid ${zone.writable ? FB.border : "#FECACA"}`,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
-                  <span style={{ fontWeight: "700", fontSize: "12px", color: FB.textPrimary, display: "flex", alignItems: "center", gap: "5px" }}>
-                    <HardDrive size={13} /> {zone.label}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: "700",
-                      padding: "1px 6px",
-                      borderRadius: "999px",
-                      background: zone.distinctMount ? "#DBEAFE" : "#E2E8F0",
-                      color: zone.distinctMount ? "#1E40AF" : "#334155",
-                    }}
-                  >
-                    {zone.distinctMount ? "Isolated Mount" : "Local Zone"}
-                  </span>
-                </div>
-                <div style={{ fontSize: "11px", color: FB.textSecondary }}>
-                  ใช้ไป {zone.usedMb.toLocaleString()} MB · ว่าง {zone.freeMb.toLocaleString()} MB
-                </div>
+            {runtime.zones.map((zone) => {
+              const hasQuota = Boolean(zone.quotaMb && zone.quotaMb > 0);
+              const pct = Math.min(100, Math.max(0, Number(zone.quotaPercent ?? 0)));
+              const barColor = pct >= 100 ? "#EF4444" : pct >= 85 ? "#F59E0B" : hasQuota ? "#2563EB" : "#94A3B8";
+              return (
                 <div
-                  title={zone.path}
+                  key={zone.id}
+                  data-testid={`storage-zone-${zone.id}`}
                   style={{
-                    fontFamily: "monospace",
-                    fontSize: "11px",
-                    color: FB.textMuted,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    background: "#F8FAFC",
+                    border: `1px solid ${!zone.writable || zone.quotaExceeded ? "#FECACA" : FB.border}`,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "5px",
                   }}
                 >
-                  {zone.path}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+                    <span style={{ fontWeight: "700", fontSize: "12px", color: FB.textPrimary, display: "flex", alignItems: "center", gap: "5px" }}>
+                      <HardDrive size={13} /> {zone.label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: "700",
+                        padding: "1px 6px",
+                        borderRadius: "999px",
+                        background: zone.distinctMount ? "#DBEAFE" : "#E2E8F0",
+                        color: zone.distinctMount ? "#1E40AF" : "#334155",
+                      }}
+                    >
+                      {zone.distinctMount ? "Isolated Mount" : "Local Zone"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "11px", color: FB.textSecondary, display: "flex", justifyContent: "space-between", gap: "4px", flexWrap: "wrap" }}>
+                    <span>ใช้ไป {zone.usedMb.toLocaleString()} MB</span>
+                    <span style={{ fontWeight: hasQuota ? "600" : "400", color: pct >= 85 && hasQuota ? barColor : FB.textMuted }}>
+                      {hasQuota
+                        ? `โควตา ${zone.quotaMb?.toLocaleString()} MB (${pct}%)`
+                        : `โควตา Auto (ว่าง ${zone.freeMb.toLocaleString()} MB)`}
+                    </span>
+                  </div>
+                  <div style={{ width: "100%", height: "6px", borderRadius: "999px", background: "#E2E8F0", overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: "999px", background: barColor, transition: "width 0.3s ease" }} />
+                  </div>
+                  <div
+                    title={zone.path}
+                    style={{
+                      fontFamily: "monospace",
+                      fontSize: "11px",
+                      color: FB.textMuted,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {zone.path}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

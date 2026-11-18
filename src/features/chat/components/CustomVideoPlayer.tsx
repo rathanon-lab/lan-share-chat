@@ -38,11 +38,24 @@ export function CustomVideoPlayer({
   const lastTapRef = useRef<{ side: "left" | "right"; time: number } | null>(null);
   const abLoopRef = useRef<{ a: number | null; b: number | null }>({ a: null, b: null });
 
-  const [srcUrl, setSrcUrl] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState(false);
-  const [compatTried, setCompatTried] = useState(false);
-  const [isTranscodingCompat, setIsTranscodingCompat] = useState(false);
-  const [audioOnlyCodecNotice, setAudioOnlyCodecNotice] = useState(false);
+  const [loadedStream, setLoadedStream] = useState<{ token: string; url: string } | null>(null);
+  const [failedToken, setFailedToken] = useState<string | null>(null);
+  const [compatUrlState, setCompatUrlState] = useState<{ token: string; url: string } | null>(null);
+  const [compatTriedToken, setCompatTriedToken] = useState<string | null>(null);
+  const [transcodingToken, setTranscodingToken] = useState<string | null>(null);
+  const [audioOnlyToken, setAudioOnlyToken] = useState<string | null>(null);
+  const [serverHasFfmpeg, setServerHasFfmpeg] = useState<boolean>(true);
+
+  const srcUrl =
+    compatUrlState?.token === token
+      ? compatUrlState.url
+      : loadedStream?.token === token
+        ? loadedStream.url
+        : null;
+  const loadError = failedToken === token;
+  const compatTried = compatTriedToken === token;
+  const isTranscodingCompat = transcodingToken === token;
+  const audioOnlyCodecNotice = audioOnlyToken === token;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -67,12 +80,12 @@ export function CustomVideoPlayer({
     fetchMediaStreamUrl(token)
       .then((url) => {
         if (mounted) {
-          setSrcUrl(url);
-          setLoadError(false);
+          setLoadedStream({ token, url });
+          setFailedToken((prev) => (prev === token ? null : prev));
         }
       })
       .catch(() => {
-        if (mounted) setLoadError(true);
+        if (mounted) setFailedToken(token);
       });
     return () => {
       mounted = false;
@@ -322,20 +335,24 @@ export function CustomVideoPlayer({
 
           if (v.videoWidth === 0 && v.videoHeight === 0) {
             if (!compatTried) {
-              setCompatTried(true);
+              setCompatTriedToken(token);
               const canTranscode = await getVideoTranscodeAvailable();
+              setServerHasFfmpeg(canTranscode);
               if (canTranscode && srcUrl && !srcUrl.includes("compat=1")) {
-                setIsTranscodingCompat(true);
-                setAudioOnlyCodecNotice(false);
-                setSrcUrl(srcUrl + (srcUrl.includes("?") ? "&compat=1" : "?compat=1"));
+                setTranscodingToken(token);
+                setAudioOnlyToken(null);
+                setCompatUrlState({
+                  token,
+                  url: srcUrl + (srcUrl.includes("?") ? "&compat=1" : "?compat=1"),
+                });
                 return;
               }
             }
-            setIsTranscodingCompat(false);
-            setAudioOnlyCodecNotice(true);
+            setTranscodingToken(null);
+            setAudioOnlyToken(token);
           } else {
-            setIsTranscodingCompat(false);
-            setAudioOnlyCodecNotice(false);
+            setTranscodingToken(null);
+            setAudioOnlyToken(null);
           }
 
           if (autoPlay) {
@@ -350,8 +367,8 @@ export function CustomVideoPlayer({
         onLoadedData={(e) => {
           const v = e.currentTarget;
           if (v.videoWidth > 0) {
-            setIsTranscodingCompat(false);
-            setAudioOnlyCodecNotice(false);
+            setTranscodingToken(null);
+            setAudioOnlyToken(null);
           }
         }}
         onPlay={() => {
@@ -426,10 +443,14 @@ export function CustomVideoPlayer({
           className="pointer-events-none absolute inset-x-4 top-1/2 -translate-y-1/2 z-20 mx-auto max-w-md rounded-2xl bg-slate-900/90 border border-amber-500/40 px-4 py-3 text-center text-white shadow-xl"
         >
           <div className="text-xs sm:text-sm font-bold text-amber-300">
-            กำลังเล่นเฉพาะเสียง (ไม่พบภาพสำหรับ Codec H.265 / HEVC)
+            {serverHasFfmpeg
+              ? "กำลังเล่นเฉพาะเสียง (ไฟล์ใช้ Codec เฉพาะทาง เช่น ByteVC2 / bvc2)"
+              : "กำลังเล่นเฉพาะเสียง (ไม่พบภาพสำหรับ Codec H.265 / HEVC)"}
           </div>
           <div className="text-[11px] sm:text-xs text-gray-300 mt-1">
-            เบราว์เซอร์นี้ไม่รองรับภาพ H.265 และเซิร์ฟเวอร์ยังไม่ได้ติดตั้ง FFmpeg — สามารถฟังเสียงได้ตามปกติ หรือกดดาวน์โหลดเพื่อเปิดดูใน VLC / มือถือ
+            {serverHasFfmpeg
+              ? "ไฟล์วิดีโอนี้เข้ารหัสด้วย Codec เฉพาะทางนอกมาตรฐานสากล (เช่น ByteVC2 ของ TikTok) ที่เบราว์เซอร์และ FFmpeg มาตรฐานไม่รองรับการถอดรหัสภาพ — สามารถฟังเสียงหรือกดดาวน์โหลดได้ตามปกติ"
+              : "เบราว์เซอร์นี้ไม่รองรับภาพ H.265 และเซิร์ฟเวอร์ยังไม่ได้ติดตั้ง FFmpeg — สามารถฟังเสียงได้ตามปกติ หรือกดดาวน์โหลดเพื่อเปิดดูใน VLC / มือถือ"}
           </div>
         </div>
       )}

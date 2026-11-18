@@ -16,6 +16,7 @@ import {
 } from '../../src/lib/db';
 import { isValidUserAvatarUrl, resolveFallbackAvatarForName } from '../../src/lib/avatars';
 import { parseDevicePlatform } from '../../src/lib/deviceMeta';
+import { validateUploadFileName } from '../../src/lib/fileNameGuard';
 import { buildStickerDedupeKey, sanitizeStickerMeta } from '../../src/lib/stickerMeta';
 import {
   applyDeviceRename,
@@ -47,6 +48,7 @@ export function registerSocketHandlers(io: SocketIOServer) {
     const platformInfo = parseDevicePlatform(rawUserAgent, clientHint);
 
     const queryDeviceId = typeof socket.handshake.query.deviceId === 'string' ? socket.handshake.query.deviceId.trim() : '';
+    const incomingTabId = typeof socket.handshake.query.tabInstanceId === 'string' ? socket.handshake.query.tabInstanceId.trim() : '';
     const wasDeleted = queryDeviceId ? await isDeviceDeleted(queryDeviceId) : false;
     const settings = await getSystemSettings();
     const sessionPolicy = settings.sessionPolicy || 'takeover';
@@ -57,21 +59,34 @@ export function registerSocketHandlers(io: SocketIOServer) {
         ? queryDeviceId
         : 'id_' + crypto.randomBytes(5).toString('hex');
 
-    const matchingOnlineSockets: Array<{ socketId: string; client: { deviceId?: string; browser?: string; name?: string; ip?: string; os?: string } }> = [];
-    if (sessionPolicy !== 'multi_allow') {
-      for (const [sid, c] of clients.entries()) {
-        if (sid === socket.id) continue;
-        if (
-          c.deviceId === deviceId ||
-          (c.ip === clientIp && String(c.os || '') === String(platformInfo.os || ''))
-        ) {
-          matchingOnlineSockets.push({ socketId: sid, client: c });
-        }
-      }
+    const matchingOnlineSockets: Array<{ socketId: string; client: { deviceId?: string; browser?: string; name?: string; ip?: string; os?: string; tabInstanceId?: string } }> = [];
+    const staleSameTabSockets: string[] = [];
+    for (const [sid, c] of clients.entries()) {
+      if (sid === socket.id) continue;
+      const oldSock = io.sockets.sockets.get(sid);
+      const isGhostOrSameTab = !oldSock?.connected || (Boolean(incomingTabId) && c.tabInstanceId === incomingTabId);
+      const isSameDeviceOrHost =
+        c.deviceId === deviceId ||
+        (c.ip === clientIp && String(c.os || '') === String(platformInfo.os || ''));
+      if (!isSameDeviceOrHost) continue;
 
+      if (isGhostOrSameTab) {
+        staleSameTabSockets.push(sid);
+        if (!deviceId && c.deviceId) deviceId = c.deviceId;
+      } else if (sessionPolicy !== 'multi_allow') {
+        matchingOnlineSockets.push({ socketId: sid, client: c });
+      }
+    }
+
+    for (const staleSid of staleSameTabSockets) {
+      clients.delete(staleSid);
+      io.sockets.sockets.get(staleSid)?.disconnect(true);
+    }
+
+    if (sessionPolicy !== 'multi_allow') {
       if (matchingOnlineSockets.length > 0 && matchingOnlineSockets[0].client?.deviceId) {
         deviceId = matchingOnlineSockets[0].client.deviceId;
-      } else {
+      } else if (staleSameTabSockets.length === 0 && !queryDeviceId && platformInfo.os !== 'Unknown') {
         const existingForHost = await findExistingDeviceByIpAndOs(clientIp, platformInfo.os);
         if (existingForHost?.deviceId) {
           deviceId = existingForHost.deviceId;
@@ -177,6 +192,7 @@ export function registerSocketHandlers(io: SocketIOServer) {
     const peerData = {
       id: socket.id,
       deviceId,
+      tabInstanceId: incomingTabId || undefined,
       name: profile.name,
       avatarUrl: profile.avatarUrl || resolveFallbackAvatarForName(profile.name),
       os: platformInfo.os,
@@ -308,6 +324,16 @@ export function registerSocketHandlers(io: SocketIOServer) {
       if (!guard.allowed) {
         socket.emit('p2p_error', { code: guard.code, message: guard.message, mutedUntil: guard.mutedUntil });
         return;
+      }
+
+      if (payload.type === 'transfer_request' && Array.isArray(payload.files)) {
+        for (const f of payload.files) {
+          const check = validateUploadFileName(String(f?.name || ''));
+          if (!check.valid) {
+            socket.emit('p2p_error', { code: 'INVALID_FILENAME', message: check.reason });
+            return;
+          }
+        }
       }
 
       for (const [id, client] of clients.entries()) {

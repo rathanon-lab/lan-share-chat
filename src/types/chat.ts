@@ -136,6 +136,8 @@ export interface TelemetryDailyRow {
   peakOnlineAt: number;
   messageCount: number;
   uploadCount: number;
+  uploadBytes?: number;
+  egressBytes?: number;
   spamBlockedCount: number;
   p2pBlockedCount: number;
 }
@@ -161,6 +163,10 @@ export interface AdminOverviewStats {
   bannedIpsCount: number;
   todayPeakOnline: number;
   todayPeakHour: number;
+  todayUploadBytes?: number;
+  todayEgressBytes?: number;
+  totalUploadBytes?: number;
+  totalEgressBytes?: number;
   daily: TelemetryDailyRow[];
   todayHourly: TelemetryHourlyRow[];
 }
@@ -235,6 +241,9 @@ export interface StorageZoneStatus {
   freeMb: number;
   totalGb: number;
   distinctMount: boolean;
+  quotaMb?: number;
+  quotaPercent?: number;
+  quotaExceeded?: boolean;
 }
 
 export interface RuntimeStorageSummary {
@@ -247,6 +256,8 @@ export interface RuntimeStorageSummary {
   diskTotalGb: number;
   diskUsedPercent: number;
   isolatedVolumesCount: number;
+  maxTotalGb?: number;
+  totalUsedMb?: number;
   zones: StorageZoneStatus[];
 }
 

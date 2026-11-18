@@ -324,6 +324,7 @@ export function AlbumGalleryModal({
                     {isVisual && !isVid && (
                       <SecureImage
                         token={item.mediaToken}
+                        thumbnail
                         alt={item.fileName}
                         fileName={item.fileName}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"

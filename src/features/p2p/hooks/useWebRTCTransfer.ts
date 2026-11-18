@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import type { PeerInfo, RuntimeConfig, TransferItem } from "@/types/chat";
+import { validateUploadFileName } from "@/lib/fileNameGuard";
 
 export interface IncomingP2PRequest {
   senderIp: string;
@@ -541,12 +542,23 @@ export function useWebRTCTransfer({
       const newFiles = Array.from(e.target.files);
       const validFiles: File[] = [];
       const oversizedNames: string[] = [];
+      const invalidNameErrors: string[] = [];
       const MAX_SIZE = runtimeConfig.maxP2pFileBytes;
 
       newFiles.forEach((f) => {
-        if (f.size > MAX_SIZE) oversizedNames.push(f.name);
-        else validFiles.push(f);
+        const nameCheck = validateUploadFileName(f.name);
+        if (!nameCheck.valid) {
+          invalidNameErrors.push(nameCheck.reason || `ชื่อไฟล์ "${f.name}" ไม่ถูกต้อง`);
+        } else if (f.size > MAX_SIZE) {
+          oversizedNames.push(f.name);
+        } else {
+          validFiles.push(f);
+        }
       });
+
+      if (invalidNameErrors.length > 0) {
+        showToast(invalidNameErrors[0], 'error');
+      }
 
       setSelectedFiles((prev) => {
         const prevNames = new Set(prev.map((f) => f.name));
@@ -571,6 +583,9 @@ export function useWebRTCTransfer({
         }
         if (oversizedNames.length > 0) {
           errorMsgs.push(`ข้าม ${oversizedNames.length} ไฟล์ เนื่องจากมีขนาดเกิน ${runtimeConfig.maxP2pFileSizeMb}MB`);
+        }
+        if (invalidNameErrors.length > 0) {
+          errorMsgs.push(...invalidNameErrors);
         }
 
         if (errorMsgs.length > 0) {

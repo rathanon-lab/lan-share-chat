@@ -167,7 +167,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
             >
               <RefreshCw size={13} />
             </button>
-            <Link href="/" style={{ ...css.btn("secondary"), padding: "5px 9px", fontSize: "11px", textDecoration: "none" }}>
+            <Link href="/" replace style={{ ...css.btn("secondary"), padding: "5px 9px", fontSize: "11px", textDecoration: "none" }}>
               <MessageSquare size={13} /> {tx("แชท", "Chat")}
             </Link>
             <button onClick={onLogout} style={{ ...css.btn("danger"), padding: "5px 9px", fontSize: "11px" }}>
@@ -272,7 +272,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
             >
               <Globe size={15} /> {isEn ? "EN" : "TH"}
             </button>
-            <Link href="/" style={{ ...css.btn("secondary"), textDecoration: "none" }}>
+            <Link href="/" replace style={{ ...css.btn("secondary"), textDecoration: "none" }}>
               <MessageSquare size={15} /> {tx("ห้องแชทหลัก", "Main Chat")}
             </Link>
             <button onClick={dash.refreshActiveTab} style={css.btn("secondary")}>

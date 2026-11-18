@@ -169,6 +169,10 @@ export function AdminOverviewTab({
               <span style={{ fontSize: "12px", fontWeight: "500", color: FB.textSecondary }}>ไฟล์</span>
             </span>
           </div>
+          <div style={{ fontSize: "11px", color: FB.blue, fontWeight: "600" }} data-testid="overview-today-traffic">
+            รับเข้าวันนี้: {formatAdminBytes(Number(todayRow?.uploadBytes ?? overview.todayUploadBytes ?? 0))} · ส่งออก/สตรีม:{" "}
+            {formatAdminBytes(Number(todayRow?.egressBytes ?? overview.todayEgressBytes ?? 0))}
+          </div>
           <div
             style={{
               fontSize: "11px",
@@ -400,7 +404,7 @@ export function AdminOverviewTab({
         <table data-testid="overview-daily-table" style={{ width: "100%", minWidth: "660px", borderCollapse: "collapse", fontSize: "13px" }}>
           <thead>
             <tr style={{ background: FB.bg, borderBottom: `1px solid ${FB.border}` }}>
-              {["วันที่", "ออนไลน์สูงสุด", "ช่วงเวลาพีค", "ข้อความ", "อัปโหลดไฟล์", "กันสแปมแชท", "กัน P2P Flood"].map((h) => (
+              {["วันที่", "ออนไลน์สูงสุด", "ช่วงเวลาพีค", "ข้อความ", "อัปโหลดไฟล์ (รับเข้า)", "ทราฟฟิกส่งออก (Egress)", "กันสแปมแชท", "กัน P2P Flood"].map((h) => (
                 <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: FB.textSecondary, fontWeight: "600", fontSize: "12px" }}>
                   {h}
                 </th>
@@ -410,7 +414,7 @@ export function AdminOverviewTab({
           <tbody>
             {dailyRows.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: FB.textMuted }}>
+                <td colSpan={8} style={{ padding: "24px", textAlign: "center", color: FB.textMuted }}>
                   ยังไม่มีข้อมูลสถิติรายวัน
                 </td>
               </tr>
@@ -436,8 +440,11 @@ export function AdminOverviewTab({
                   </td>
                   <td style={{ padding: "10px 14px", color: FB.textPrimary }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                      <Upload size={12} style={{ color: FB.textMuted }} /> {row.uploadCount}
+                      <Upload size={12} style={{ color: FB.textMuted }} /> {row.uploadCount} ไฟล์ ({formatAdminBytes(Number(row.uploadBytes || 0))})
                     </span>
+                  </td>
+                  <td style={{ padding: "10px 14px", color: FB.blue, fontWeight: "600" }}>
+                    {formatAdminBytes(Number(row.egressBytes || 0))}
                   </td>
                   <td style={{ padding: "10px 14px", color: row.spamBlockedCount > 0 ? FB.red : FB.textMuted, fontWeight: row.spamBlockedCount > 0 ? "700" : "400" }}>
                     {row.spamBlockedCount}

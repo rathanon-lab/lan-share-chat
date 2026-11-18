@@ -76,5 +76,6 @@ export {
   clearAllTelemetry,
   getAdminOverviewStats,
   incrementTelemetryCounter,
+  recordMediaEgressBytes,
   recordOnlineTelemetry,
 } from './telemetryRepo';

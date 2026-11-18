@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import {
   ADMIN_PASSWORD,
@@ -11,7 +12,7 @@ import {
 } from '../config';
 import { logActivity } from '../../src/lib/db';
 import type { RuntimeStorageSummary } from '../../src/types/chat';
-import { getRuntimeStorageReport } from './storageRuntime';
+import { enforceCacheLruQuota, getRuntimeStorageReport } from './storageRuntime';
 
 export interface FfmpegCapability {
   available: boolean;
@@ -51,6 +52,26 @@ export interface ReadOnlyEnvStatusResponse {
 let cachedCapability: FfmpegCapability | null = null;
 let envDiagnosticLogs: EnvDiagnosticLog[] = [];
 const inFlightTranscodes = new Map<string, Promise<string | null>>();
+const inFlightThumbnails = new Map<string, Promise<string | null>>();
+
+const MAX_FFMPEG_WORKERS = Math.min(4, Math.max(2, os.cpus().length));
+let activeFfmpegWorkers = 0;
+const ffmpegWaitQueue: Array<() => void> = [];
+
+/** Bounds concurrent FFmpeg child processes to prevent blocking I/O / CPU exhaustion under bursts. */
+async function runFfmpegTask<T>(task: () => Promise<T>): Promise<T> {
+  if (activeFfmpegWorkers >= MAX_FFMPEG_WORKERS) {
+    await new Promise<void>((resolve) => ffmpegWaitQueue.push(resolve));
+  }
+  activeFfmpegWorkers += 1;
+  try {
+    return await task();
+  } finally {
+    activeFfmpegWorkers = Math.max(0, activeFfmpegWorkers - 1);
+    const next = ffmpegWaitQueue.shift();
+    if (next) next();
+  }
+}
 
 function tryProbeBinary(bin: string): { ok: boolean; version: string | null; err: string | null } {
   try {
@@ -234,11 +255,54 @@ export function getCompatVideoCachePath(storedName: string): string {
   return path.join(videoCacheDir, `${safeBase}.h264.mp4`);
 }
 
+export function getMediaThumbnailPath(storedName: string): string {
+  const safeBase = path.basename(storedName).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return path.join(videoCacheDir, `${safeBase}.thumb.jpg`);
+}
+
 export function removeCompatVideoCache(storedName: string) {
   try {
     const cachePath = getCompatVideoCachePath(storedName);
     if (fs.existsSync(cachePath)) fs.unlinkSync(cachePath);
   } catch {}
+  try {
+    const thumbPath = getMediaThumbnailPath(storedName);
+    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+  } catch {}
+}
+
+function execFfmpegToFile(
+  ffmpegBin: string,
+  args: string[],
+  tmpPath: string,
+  destPath: string,
+  timeoutMs: number
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    if (!fs.existsSync(videoCacheDir)) fs.mkdirSync(videoCacheDir, { recursive: true });
+    execFile(ffmpegBin, args, { timeout: timeoutMs }, (err) => {
+      if (err) {
+        try {
+          if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+        } catch {}
+        resolve(null);
+        return;
+      }
+      try {
+        if (fs.existsSync(tmpPath)) {
+          const st = fs.statSync(tmpPath);
+          if (st.size > 0) {
+            enforceCacheLruQuota(st.size);
+            fs.renameSync(tmpPath, destPath);
+            resolve(destPath);
+            return;
+          }
+          fs.unlinkSync(tmpPath);
+        }
+      } catch {}
+      resolve(null);
+    });
+  });
 }
 
 /**
@@ -263,8 +327,7 @@ export async function getOrCreateCompatPreviewVideo(
     return inFlightTranscodes.get(cachePath)!;
   }
 
-  const job = new Promise<string | null>((resolve) => {
-    if (!fs.existsSync(videoCacheDir)) fs.mkdirSync(videoCacheDir, { recursive: true });
+  const job = runFfmpegTask(async () => {
     const tmpPath = `${cachePath}.${Date.now()}.tmp.mp4`;
     const args = [
       '-y',
@@ -290,28 +353,84 @@ export async function getOrCreateCompatPreviewVideo(
       '128k',
       tmpPath,
     ];
-
-    execFile(cap.ffmpegBin!, args, { timeout: 120_000 }, (err) => {
-      if (err) {
-        try {
-          if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-        } catch {}
-        resolve(null);
-        return;
-      }
-      try {
-        if (fs.existsSync(tmpPath) && fs.statSync(tmpPath).size > 0) {
-          fs.renameSync(tmpPath, cachePath);
-          resolve(cachePath);
-          return;
-        }
-      } catch {}
-      resolve(null);
-    });
+    return execFfmpegToFile(cap.ffmpegBin!, args, tmpPath, cachePath, 120_000);
   }).finally(() => {
     inFlightTranscodes.delete(cachePath);
   });
 
   inFlightTranscodes.set(cachePath, job);
+  return job;
+}
+
+/**
+ * Extracts and caches a compact JPEG thumbnail (<= 360px wide) inside videoCacheDir.
+ * Small images (<= 64 KB) bypass FFmpeg and return originalFilePath directly.
+ */
+export async function getOrCreateMediaThumbnail(
+  originalFilePath: string,
+  storedName: string,
+  isVideo: boolean
+): Promise<string | null> {
+  try {
+    if (!isVideo && fs.statSync(originalFilePath).size <= 65_536) {
+      return originalFilePath;
+    }
+  } catch {
+    return null;
+  }
+
+  const thumbPath = getMediaThumbnailPath(storedName);
+  if (fs.existsSync(thumbPath)) {
+    try {
+      if (fs.statSync(thumbPath).size > 0) return thumbPath;
+    } catch {}
+  }
+
+  const cap = probeFfmpegCapability();
+  if (!cap.available || !cap.ffmpegBin) {
+    return isVideo ? null : originalFilePath;
+  }
+
+  if (inFlightThumbnails.has(thumbPath)) {
+    return inFlightThumbnails.get(thumbPath)!;
+  }
+
+  const job = runFfmpegTask(async () => {
+    const nonce = `${Date.now()}-${Math.round(Math.random() * 1e5)}`;
+    if (isVideo) {
+      const tmpSeek = `${thumbPath}.${nonce}.tmp.jpg`;
+      const firstTry = await execFfmpegToFile(
+        cap.ffmpegBin!,
+        ['-y', '-ss', '00:00:00.500', '-i', originalFilePath, '-frames:v', '1', '-vf', "scale='min(360,iw)':-2", '-q:v', '5', tmpSeek],
+        tmpSeek,
+        thumbPath,
+        20_000
+      );
+      if (firstTry) return firstTry;
+
+      const tmpZero = `${thumbPath}.${nonce}.z.tmp.jpg`;
+      return execFfmpegToFile(
+        cap.ffmpegBin!,
+        ['-y', '-ss', '00:00:00', '-i', originalFilePath, '-frames:v', '1', '-vf', "scale='min(360,iw)':-2", '-q:v', '5', tmpZero],
+        tmpZero,
+        thumbPath,
+        20_000
+      );
+    }
+
+    const tmpImg = `${thumbPath}.${nonce}.img.tmp.jpg`;
+    const resized = await execFfmpegToFile(
+      cap.ffmpegBin!,
+      ['-y', '-i', originalFilePath, '-frames:v', '1', '-vf', "scale='min(360,iw)':-2", '-q:v', '5', tmpImg],
+      tmpImg,
+      thumbPath,
+      15_000
+    );
+    return resized || originalFilePath;
+  }).finally(() => {
+    inFlightThumbnails.delete(thumbPath);
+  });
+
+  inFlightThumbnails.set(thumbPath, job);
   return job;
 }

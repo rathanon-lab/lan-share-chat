@@ -1,13 +1,107 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Loader2, AlertCircle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AlertCircle, Film, Loader2, RefreshCw } from 'lucide-react';
+import { sanitizeDownloadFileName } from '@/lib/fileNameGuard';
 
 const blobUrlCache = new Map<string, string>();
 const blobCache = new Map<string, Blob>();
 const inFlightRequests = new Map<string, Promise<string>>();
+const thumbUrlCache = new Map<string, string | null>();
+const inFlightThumbs = new Map<string, Promise<string | null>>();
 const streamUrlCache = new Map<string, { url: string; exp: number }>();
+const mediaResolvedListeners = new Map<string, Set<() => void>>();
 let cachedVideoTranscodeAvail: boolean | null = null;
+
+const MAX_CONCURRENT_MEDIA = 6;
+let activeMediaLoads = 0;
+const mediaLoadQueue: Array<() => void> = [];
+
+function runWithMediaQueue<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      activeMediaLoads += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeMediaLoads = Math.max(0, activeMediaLoads - 1);
+          const next = mediaLoadQueue.shift();
+          if (next) next();
+        });
+    };
+    if (activeMediaLoads < MAX_CONCURRENT_MEDIA) {
+      start();
+    } else {
+      mediaLoadQueue.push(start);
+    }
+  });
+}
+
+async function fetchWithRetryOn429(input: RequestInfo | URL, init: RequestInit, maxRetries = 3): Promise<Response> {
+  const backoffMs = [350, 800, 1600];
+  let attempt = 0;
+  while (true) {
+    const res = await fetch(input, init);
+    if (res.status !== 429 || attempt >= maxRetries) {
+      return res;
+    }
+    const waitMs = backoffMs[Math.min(attempt, backoffMs.length - 1)];
+    attempt += 1;
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+}
+
+function notifyMediaResolved(token: string): void {
+  const subs = mediaResolvedListeners.get(token);
+  if (!subs) return;
+  for (const cb of Array.from(subs)) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
+function subscribeMediaResolved(token: string, cb: () => void): () => void {
+  let set = mediaResolvedListeners.get(token);
+  if (!set) {
+    set = new Set();
+    mediaResolvedListeners.set(token, set);
+  }
+  set.add(cb);
+  return () => {
+    const cur = mediaResolvedListeners.get(token);
+    if (!cur) return;
+    cur.delete(cb);
+    if (cur.size === 0) mediaResolvedListeners.delete(token);
+  };
+}
+
+function useInViewport(rootMargin = '280px'): { ref: React.RefObject<HTMLDivElement | null>; inView: boolean } {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState<boolean>(() => typeof IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    if (inView) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setInView(true);
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [inView, rootMargin]);
+
+  return { ref, inView };
+}
 
 export async function getVideoTranscodeAvailable(): Promise<boolean> {
   if (cachedVideoTranscodeAvail !== null) return cachedVideoTranscodeAvail;
@@ -72,8 +166,8 @@ export async function fetchEncryptedMediaBlobUrl(
   }
 
   const headers = resolveAuthHeaders(opts);
-  const promise = (async () => {
-    const res = await fetch('/api/media/fetch', {
+  const promise = runWithMediaQueue(async () => {
+    const res = await fetchWithRetryOn429('/api/media/fetch', {
       method: 'POST',
       headers,
       body: JSON.stringify({ token }),
@@ -104,8 +198,9 @@ export async function fetchEncryptedMediaBlobUrl(
     const objectUrl = URL.createObjectURL(blob);
     blobUrlCache.set(token, objectUrl);
     inFlightRequests.delete(token);
+    notifyMediaResolved(token);
     return objectUrl;
-  })();
+  });
 
   inFlightRequests.set(token, promise);
   promise.catch(() => {
@@ -116,8 +211,60 @@ export async function fetchEncryptedMediaBlobUrl(
 }
 
 /**
+ * Fetches a compact server-generated JPEG thumbnail via /api/media/thumb with
+ * bounded concurrency and 429 retry backoff. Returns null when 204 No Content.
+ */
+export async function fetchEncryptedThumbnailUrl(
+  token: string,
+  opts?: { deviceId?: string; adminToken?: string }
+): Promise<string | null> {
+  if (!token) throw new Error('Missing media token');
+  if (thumbUrlCache.has(token)) {
+    return thumbUrlCache.get(token) ?? null;
+  }
+  if (inFlightThumbs.has(token)) {
+    return inFlightThumbs.get(token)!;
+  }
+
+  const headers = resolveAuthHeaders(opts);
+  const promise = runWithMediaQueue(async () => {
+    const res = await fetchWithRetryOn429('/api/media/thumb', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ token }),
+    });
+    if (res.status === 204) {
+      thumbUrlCache.set(token, null);
+      inFlightThumbs.delete(token);
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`Failed to fetch thumbnail (${res.status})`);
+    }
+    const blob = await res.blob();
+    if (blob.size === 0) {
+      thumbUrlCache.set(token, null);
+      inFlightThumbs.delete(token);
+      return null;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    thumbUrlCache.set(token, objectUrl);
+    inFlightThumbs.delete(token);
+    notifyMediaResolved(token);
+    return objectUrl;
+  });
+
+  inFlightThumbs.set(token, promise);
+  promise.catch(() => {
+    inFlightThumbs.delete(token);
+  });
+
+  return promise;
+}
+
+/**
  * Obtains a short-lived byte-range (HTTP 206) stream URL for Video & Audio.
- * Ensures Safari iOS and large 5-minute MP4 files seek/play immediately without buffering entire file in RAM.
+ * Ensures Safari iOS and large 5-minute MP4 files seek/play without buffering entire file in RAM.
  */
 export async function fetchMediaStreamUrl(
   token: string,
@@ -129,20 +276,23 @@ export async function fetchMediaStreamUrl(
     return cached.url;
   }
 
-  const res = await fetch('/api/media/stream-ticket', {
-    method: 'POST',
-    headers: resolveAuthHeaders(opts),
-    body: JSON.stringify({ token }),
+  return runWithMediaQueue(async () => {
+    const res = await fetchWithRetryOn429('/api/media/stream-ticket', {
+      method: 'POST',
+      headers: resolveAuthHeaders(opts),
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to create stream ticket (${res.status})`);
+    }
+    const data = await res.json();
+    if (!data?.streamUrl) {
+      throw new Error('Missing streamUrl in response');
+    }
+    streamUrlCache.set(token, { url: data.streamUrl, exp: Date.now() + 12 * 60 * 1000 });
+    notifyMediaResolved(token);
+    return data.streamUrl;
   });
-  if (!res.ok) {
-    return fetchEncryptedMediaBlobUrl(token, opts);
-  }
-  const data = await res.json();
-  if (!data?.streamUrl) {
-    return fetchEncryptedMediaBlobUrl(token, opts);
-  }
-  streamUrlCache.set(token, { url: data.streamUrl, exp: Date.now() + 12 * 60 * 1000 });
-  return data.streamUrl;
 }
 
 export async function downloadEncryptedMedia(
@@ -160,7 +310,7 @@ export async function downloadEncryptedMedia(
   const url = URL.createObjectURL(rawBlob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName || 'download';
+  a.download = sanitizeDownloadFileName(fileName || 'download');
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -215,6 +365,7 @@ export function SecureImage({
   className,
   style,
   onClick,
+  thumbnail = false,
 }: {
   token: string;
   alt?: string;
@@ -222,20 +373,40 @@ export function SecureImage({
   className?: string;
   style?: React.CSSProperties;
   onClick?: () => void;
+  thumbnail?: boolean;
 }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(() => blobUrlCache.get(token) || null);
+  const { ref, inView } = useInViewport('280px');
+  const cachedUrl = (thumbnail ? thumbUrlCache.get(token) : null) || blobUrlCache.get(token) || null;
+  const [blobUrl, setBlobUrl] = useState<string | null>(cachedUrl);
   const [error, setError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
+  const effectiveUrl = cachedUrl || blobUrl;
+
+  useEffect(() => {
+    if (!token) return;
+    return subscribeMediaResolved(token, () => {
+      const next = (thumbnail ? thumbUrlCache.get(token) : null) || blobUrlCache.get(token) || null;
+      if (next) {
+        setBlobUrl(next);
+        setError(false);
+      }
+    });
+  }, [token, thumbnail]);
 
   useEffect(() => {
     let mounted = true;
-    if (!token) return;
-    if (blobUrlCache.has(token)) {
-      setBlobUrl(blobUrlCache.get(token)!);
-      return;
-    }
-    fetchEncryptedMediaBlobUrl(token, { fileName: fileName || alt })
+    if (!token || cachedUrl || !inView) return;
+
+    const loadPromise = thumbnail
+      ? fetchEncryptedThumbnailUrl(token).then((u) => u || fetchEncryptedMediaBlobUrl(token, { fileName: fileName || alt }))
+      : fetchEncryptedMediaBlobUrl(token, { fileName: fileName || alt });
+
+    loadPromise
       .then((url) => {
-        if (mounted) setBlobUrl(url);
+        if (mounted) {
+          setBlobUrl(url);
+          setError(false);
+        }
       })
       .catch(() => {
         if (mounted) setError(true);
@@ -243,34 +414,50 @@ export function SecureImage({
     return () => {
       mounted = false;
     };
-  }, [token, fileName, alt]);
+  }, [token, cachedUrl, fileName, alt, thumbnail, inView, retryTick]);
 
   if (error) {
     return (
       <div
-        className={`flex items-center justify-center bg-gray-100 text-gray-400 text-xs gap-1.5 p-4 rounded-xl ${className || ''}`}
+        ref={ref}
+        className={`flex items-center justify-center bg-gray-100 text-gray-500 text-xs gap-1.5 p-3 rounded-xl ${className || ''}`}
         style={style}
       >
         <AlertCircle size={14} /> โหลดสื่อไม่สำเร็จ
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setError(false);
+            setRetryTick((n) => n + 1);
+          }}
+          title="ลองโหลดใหม่"
+          className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white border border-gray-300 text-[10px] text-gray-700 hover:bg-gray-50"
+        >
+          <RefreshCw size={10} /> ลองใหม่
+        </button>
       </div>
     );
   }
 
-  if (!blobUrl) {
+  if (!effectiveUrl) {
     return (
       <div
+        ref={ref}
         className={`flex items-center justify-center bg-black/10 animate-pulse rounded-xl min-h-[120px] ${className || ''}`}
         style={style}
       >
-        <Loader2 size={20} className="animate-spin opacity-60" />
+        {inView && <Loader2 size={20} className="animate-spin opacity-60" />}
       </div>
     );
   }
 
   return (
     <img
-      src={blobUrl}
+      src={effectiveUrl}
       alt={alt || 'media'}
+      loading="lazy"
+      decoding="async"
       className={className}
       style={style}
       onClick={onClick}
@@ -295,36 +482,139 @@ export function SecureVideo({
   muted?: boolean;
   onClick?: () => void;
 }) {
-  const [srcUrl, setSrcUrl] = useState<string | null>(() => streamUrlCache.get(token)?.url || blobUrlCache.get(token) || null);
+  const { ref, inView } = useInViewport('280px');
+  const isPosterMode = !controls;
+  const hasCachedThumb = isPosterMode && thumbUrlCache.has(token);
+  const cachedThumb = hasCachedThumb ? (thumbUrlCache.get(token) ?? null) : undefined;
+  const cachedStream = !isPosterMode ? (streamUrlCache.get(token)?.url || null) : null;
+
+  const [thumbUrl, setThumbUrl] = useState<string | null>(cachedThumb ?? null);
+  const [thumbLoaded, setThumbLoaded] = useState<boolean>(hasCachedThumb);
+  const [srcUrl, setSrcUrl] = useState<string | null>(cachedStream);
   const [error, setError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
+
+  const effectiveThumb = cachedThumb !== undefined ? cachedThumb : thumbUrl;
+  const effectiveThumbLoaded = hasCachedThumb || thumbLoaded;
+  const effectiveSrcUrl = cachedStream || srcUrl;
+
+  useEffect(() => {
+    if (!token) return;
+    return subscribeMediaResolved(token, () => {
+      if (isPosterMode) {
+        if (thumbUrlCache.has(token)) {
+          setThumbUrl(thumbUrlCache.get(token) ?? null);
+          setThumbLoaded(true);
+          setError(false);
+        }
+      } else {
+        const nextStream = streamUrlCache.get(token)?.url;
+        if (nextStream) {
+          setSrcUrl(nextStream);
+          setError(false);
+        }
+      }
+    });
+  }, [token, isPosterMode]);
 
   useEffect(() => {
     let mounted = true;
     if (!token) return;
-    fetchMediaStreamUrl(token)
-      .then((url) => {
-        if (mounted) setSrcUrl(url);
-      })
-      .catch(() => {
-        if (mounted) setError(true);
-      });
+
+    if (isPosterMode) {
+      if (hasCachedThumb || !inView) return;
+      fetchEncryptedThumbnailUrl(token)
+        .then((url) => {
+          if (mounted) {
+            setThumbUrl(url);
+            setThumbLoaded(true);
+            setError(false);
+          }
+        })
+        .catch(() => {
+          if (mounted) setError(true);
+        });
+    } else {
+      fetchMediaStreamUrl(token)
+        .then((url) => {
+          if (mounted) {
+            setSrcUrl(url);
+            setError(false);
+          }
+        })
+        .catch(() => {
+          if (mounted) setError(true);
+        });
+    }
+
     return () => {
       mounted = false;
     };
-  }, [token]);
+  }, [token, isPosterMode, hasCachedThumb, inView, retryTick]);
 
   if (error) {
     return (
       <div
-        className={`flex items-center justify-center bg-gray-900 text-gray-400 text-xs gap-1.5 p-4 rounded-xl ${className || ''}`}
+        ref={ref}
+        className={`flex items-center justify-center bg-gray-900 text-gray-300 text-xs gap-1.5 p-3 rounded-xl ${className || ''}`}
         style={style}
       >
         <AlertCircle size={14} /> โหลดวิดีโอไม่สำเร็จ
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setError(false);
+            setRetryTick((n) => n + 1);
+          }}
+          title="ลองโหลดใหม่"
+          className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-gray-800 border border-gray-600 text-[10px] text-gray-200 hover:bg-gray-700"
+        >
+          <RefreshCw size={10} /> ลองใหม่
+        </button>
       </div>
     );
   }
 
-  if (!srcUrl) {
+  // Grid / Feed Poster Mode: NEVER mount raw <video> tags inside lists or grids (Netflix NIO / RAM guard)
+  if (isPosterMode) {
+    if (!effectiveThumbLoaded) {
+      return (
+        <div
+          ref={ref}
+          className={`flex items-center justify-center bg-slate-900 text-slate-400 rounded-xl min-h-[120px] ${className || ''}`}
+          style={style}
+          onClick={onClick}
+        >
+          {inView ? <Loader2 size={20} className="animate-spin opacity-60" /> : <Film size={22} className="opacity-40" />}
+        </div>
+      );
+    }
+    if (effectiveThumb) {
+      return (
+        <img
+          src={effectiveThumb}
+          alt="video thumbnail"
+          loading="lazy"
+          decoding="async"
+          className={className}
+          style={style}
+          onClick={onClick}
+        />
+      );
+    }
+    return (
+      <div
+        className={`flex flex-col items-center justify-center bg-slate-900 text-slate-400 gap-1 min-h-[120px] ${className || ''}`}
+        style={style}
+        onClick={onClick}
+      >
+        <Film size={24} className="opacity-50" />
+      </div>
+    );
+  }
+
+  if (!effectiveSrcUrl) {
     return (
       <div
         className={`flex items-center justify-center bg-black/80 text-white animate-pulse rounded-xl min-h-[140px] ${className || ''}`}
@@ -337,12 +627,12 @@ export function SecureVideo({
 
   return (
     <video
-      src={srcUrl}
+      src={effectiveSrcUrl}
       controls={controls}
       autoPlay={autoPlay}
       muted={muted}
       playsInline
-      preload="metadata"
+      preload="none"
       className={className}
       style={style}
       onClick={onClick}

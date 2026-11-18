@@ -156,7 +156,8 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
       }
     } catch {}
 
-    const newSocket = io({ query: { deviceId: savedDeviceId, clientHint } });
+    const tabInstanceId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const newSocket = io({ query: { deviceId: savedDeviceId, clientHint, tabInstanceId } });
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     newSocket.on("connect", () => {

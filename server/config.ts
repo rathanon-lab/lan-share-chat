@@ -35,6 +35,10 @@ try {
   }
 } catch {}
 
+if (!process.env.TZ) {
+  process.env.TZ = 'Asia/Bangkok';
+}
+
 export const isDevMode = process.env.NODE_ENV !== 'production';
 export const port = parseInt(process.env.PORT || '3000', 10);
 
@@ -88,6 +92,15 @@ export const MAX_CHAT_FILES_BATCH = Math.max(
   Math.min(50, parseInt(process.env.MAX_CHAT_FILES_BATCH || '10', 10) || 10)
 );
 export const MIN_DISK_FREE_MB = Math.max(0, parseInt(process.env.MIN_DISK_FREE_MB || '512', 10) || 0);
+
+// ─── Per-Zone Storage Quotas (0 = Auto / Unlimited up to MIN_DISK_FREE_MB) ─
+export const STORAGE_MAX_TOTAL_GB = Math.max(0, parseFloat(process.env.STORAGE_MAX_TOTAL_GB || '0') || 0);
+export const STORAGE_MAX_UPLOADS_GB = Math.max(0, parseFloat(process.env.STORAGE_MAX_UPLOADS_GB || '0') || 0);
+export const STORAGE_MAX_STICKERS_MB = Math.max(0, parseInt(process.env.STORAGE_MAX_STICKERS_MB || '0', 10) || 0);
+export const STORAGE_MAX_CACHE_MB = Math.max(0, parseInt(process.env.STORAGE_MAX_CACHE_MB || '0', 10) || 0);
+export const STORAGE_MAX_CHUNKS_MB = Math.max(0, parseInt(process.env.STORAGE_MAX_CHUNKS_MB || '0', 10) || 0);
+export const STORAGE_MAX_AVATARS_MB = Math.max(0, parseInt(process.env.STORAGE_MAX_AVATARS_MB || '0', 10) || 0);
+export const STORAGE_WARN_DB_MB = Math.max(0, parseInt(process.env.STORAGE_WARN_DB_MB || '2048', 10) || 2048);
 
 // ─── Multer Uploaders ──────────────────────────────────────────
 export const upload = multer({

@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Eye, FileText, Film, Image as ImageIcon, LayoutGrid, List, Mic, Play, Search, Trash2 } from "lucide-react";
 import type { PreviewableFile } from "@/lib/filePreviewer";
 import { isRichPreviewSupported } from "@/lib/filePreviewer";
 import { FB, css, formatAdminBytes, formatAdminDate } from "@/features/admin/theme";
 import { SecureAudio, SecureImage, SecureVideo, downloadEncryptedMedia } from "@/lib/secureMedia";
+
+const PAGE_WINDOW_STEP = 24;
 
 export interface AdminUploadedFileItem {
   id: number;
@@ -60,6 +62,8 @@ export function AdminFilesTab({
   const [category, setCategory] = useState<FileCategory>("all");
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [visibleCount, setVisibleCount] = useState(PAGE_WINDOW_STEP);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const validFileIds = useMemo(() => new Set(files.map((f) => Number(f.id))), [files]);
   const activeSelectedIds = useMemo(
@@ -85,6 +89,28 @@ export function AdminFilesTab({
       );
     });
   }, [files, category, query]);
+
+  const visibleFiles = useMemo(
+    () => filteredFiles.slice(0, visibleCount),
+    [filteredFiles, visibleCount]
+  );
+  const hasMoreFiles = visibleFiles.length < filteredFiles.length;
+
+  useEffect(() => {
+    if (!hasMoreFiles) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((prev) => Math.min(filteredFiles.length, prev + PAGE_WINDOW_STEP));
+        }
+      },
+      { rootMargin: "360px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMoreFiles, filteredFiles.length, visibleFiles.length]);
 
   const allFilteredSelected =
     filteredFiles.length > 0 && filteredFiles.every((f) => activeSelectedIds.has(Number(f.id)));
@@ -146,7 +172,10 @@ export function AdminFilesTab({
             <button
               type="button"
               data-testid="files-view-grid-btn"
-              onClick={() => setViewMode("grid")}
+              onClick={() => {
+                setViewMode("grid");
+                setVisibleCount(PAGE_WINDOW_STEP);
+              }}
               title="มุมมองการ์ด (Grid)"
               style={{
                 display: "inline-flex",
@@ -168,7 +197,10 @@ export function AdminFilesTab({
             <button
               type="button"
               data-testid="files-view-list-btn"
-              onClick={() => setViewMode("list")}
+              onClick={() => {
+                setViewMode("list");
+                setVisibleCount(PAGE_WINDOW_STEP);
+              }}
               title="มุมมองรายการ (List)"
               style={{
                 display: "inline-flex",
@@ -211,7 +243,10 @@ export function AdminFilesTab({
                 key={chip.id}
                 type="button"
                 data-testid={`files-filter-${chip.id}`}
-                onClick={() => setCategory(chip.id)}
+                onClick={() => {
+                  setCategory(chip.id);
+                  setVisibleCount(PAGE_WINDOW_STEP);
+                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -249,7 +284,10 @@ export function AdminFilesTab({
             style={{ ...css.input, paddingLeft: "32px", borderRadius: "20px", fontSize: "13px" }}
             placeholder="ค้นหาชื่อไฟล์ / ผู้ส่ง / IP..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setVisibleCount(PAGE_WINDOW_STEP);
+            }}
           />
         </div>
       </div>
@@ -261,7 +299,7 @@ export function AdminFilesTab({
         </div>
       ) : viewMode === "grid" ? (
         <div data-testid="files-grid-container" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "12px" }}>
-          {filteredFiles.map((f) => {
+          {visibleFiles.map((f) => {
             const cat = detectFileCategory(f);
             const extInfo = getExtBadge(f.originalName);
             const idNum = Number(f.id);
@@ -344,7 +382,7 @@ export function AdminFilesTab({
 
                   {cat === "image" && f.mediaToken && (
                     <div onClick={() => onPreviewFile(previewObj)} style={{ width: "100%", height: "100%", cursor: "pointer" }} title="คลิกเพื่อดูภาพเต็มจอ">
-                      <SecureImage token={f.mediaToken} alt={f.originalName} fileName={f.originalName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      <SecureImage token={f.mediaToken} thumbnail alt={f.originalName} fileName={f.originalName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     </div>
                   )}
                   {cat === "video" && f.mediaToken && (
@@ -419,7 +457,7 @@ export function AdminFilesTab({
         </div>
       ) : (
         <div data-testid="files-list-container">
-          {filteredFiles.map((f) => {
+          {visibleFiles.map((f) => {
             const cat = detectFileCategory(f);
             const extInfo = getExtBadge(f.originalName);
             const idNum = Number(f.id);
@@ -465,7 +503,7 @@ export function AdminFilesTab({
                   }}
                 >
                   {cat === "image" && f.mediaToken ? (
-                    <SecureImage token={f.mediaToken} alt={f.originalName} fileName={f.originalName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <SecureImage token={f.mediaToken} thumbnail alt={f.originalName} fileName={f.originalName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   ) : cat === "video" ? (
                     <div style={{ width: "100%", height: "100%", background: "#0F172A", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Play size={18} fill="white" />
@@ -507,6 +545,49 @@ export function AdminFilesTab({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {filteredFiles.length > 0 && (
+        <div
+          ref={sentinelRef}
+          data-testid="files-window-footer"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px",
+            flexWrap: "wrap",
+            marginTop: "16px",
+            padding: "10px 14px",
+            borderRadius: "10px",
+            background: FB.white,
+            border: `1px solid ${FB.border}`,
+          }}
+        >
+          <span style={{ fontSize: "12px", color: FB.textSecondary, fontWeight: "600" }}>
+            แสดง {visibleFiles.length} จาก {filteredFiles.length} ไฟล์
+          </span>
+          {hasMoreFiles && (
+            <>
+              <button
+                type="button"
+                data-testid="files-load-more-btn"
+                onClick={() => setVisibleCount((prev) => Math.min(filteredFiles.length, prev + PAGE_WINDOW_STEP))}
+                style={{ ...css.btn("secondary"), fontSize: "12px", padding: "5px 12px", color: FB.blue }}
+              >
+                โหลดเพิ่ม (+{Math.min(PAGE_WINDOW_STEP, filteredFiles.length - visibleFiles.length)})
+              </button>
+              <button
+                type="button"
+                data-testid="files-show-all-btn"
+                onClick={() => setVisibleCount(filteredFiles.length)}
+                style={{ ...css.btn("secondary"), fontSize: "12px", padding: "5px 12px" }}
+              >
+                แสดงทั้งหมด ({filteredFiles.length})
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

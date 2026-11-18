@@ -9,6 +9,7 @@ import {
   updateStickerPackMeta,
 } from '../../src/lib/db';
 import { getIoRef, jsonErr, jsonOk, parseJsonBody } from '../state';
+import { checkUploadDiskGuard } from '../utils/storageRuntime';
 import {
   MAX_STICKERS_PER_PACK,
   MIN_STICKERS_PER_PACK,
@@ -41,6 +42,12 @@ function handleStickerMultipartUpload(
   res: ServerResponse,
   targetPackId?: string
 ): Promise<boolean> {
+  const declaredBytes = parseInt(String(req.headers['content-length'] || '0'), 10) || 0;
+  const diskCheck = checkUploadDiskGuard(declaredBytes, 'stickers');
+  if (!diskCheck.ok) {
+    jsonErr(res, 507, diskCheck.error || 'Insufficient sticker storage space');
+    return Promise.resolve(true);
+  }
   return new Promise<boolean>((resolve) => {
     const uploadAny = stickerUpload.any();
     // @ts-expect-error Multer middleware signature works with raw IncomingMessage/ServerResponse

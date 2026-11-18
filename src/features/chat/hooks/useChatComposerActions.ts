@@ -13,6 +13,7 @@ import type {
   SystemSettings,
 } from "@/types/chat";
 import type { ConfirmDeleteModalState } from "@/features/chat/components/ChatModals";
+import { validateUploadFileName } from "@/lib/fileNameGuard";
 import { pickSupportedRecorderMime, transcodeAudioBlobToMp3 } from "@/lib/voiceRecorder";
 
 export function useChatComposerActions(params: {
@@ -53,8 +54,14 @@ export function useChatComposerActions(params: {
     const MAX_FILES = runtimeConfig.maxChatFilesBatch || 10;
     const valid: StagedChatFile[] = [];
     const oversized: string[] = [];
+    const invalidNameReasons: string[] = [];
 
     for (const file of arr) {
+      const nameCheck = validateUploadFileName(file.name);
+      if (!nameCheck.valid) {
+        invalidNameReasons.push(nameCheck.reason || `ชื่อไฟล์ "${file.name}" ไม่ถูกต้อง`);
+        continue;
+      }
       if (file.size > MAX_PER_FILE) {
         oversized.push(file.name);
         continue;
@@ -68,6 +75,9 @@ export function useChatComposerActions(params: {
       valid.push({ id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, file, previewUrl, kind });
     }
 
+    if (invalidNameReasons.length > 0) {
+      showToast(invalidNameReasons[0], "error");
+    }
     if (oversized.length > 0) {
       showToast(`ข้ามไฟล์ขนาดเกิน ${runtimeConfig.maxChatFileSizeMb}MB: ${oversized.join(", ")}`, "error");
     }

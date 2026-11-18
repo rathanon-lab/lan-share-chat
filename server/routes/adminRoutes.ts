@@ -43,7 +43,7 @@ import {
   saveBase64AvatarToStorage,
   timingSafeEqualStr,
 } from '../state';
-import { checkHttpRateLimit } from '../security';
+import { checkHttpRateLimit, clearSecurityBuckets } from '../security';
 import { ADMIN_DEFAULT_AVATAR_URL } from '../../src/lib/avatars';
 import { sanitizeStickerMeta } from '../../src/lib/stickerMeta';
 import { buildStickerTemplateZip, cleanupOrphanedStickerDirs, resetStickerPacksToDefaults } from '../../src/lib/stickerStore';
@@ -328,7 +328,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     }
     if (body.resetTelemetry || isFullReset) {
       await clearAllTelemetry();
+      clearSecurityBuckets();
       await logActivity('RESET_TELEMETRY', 'admin', clientIp, 'Cleared daily/hourly telemetry stats and banned IPs');
+    } else if (body.resetDevices) {
+      clearSecurityBuckets();
     }
     if (body.resetStickers || isFullReset) {
       const defaultPacks = await resetStickerPacksToDefaults({

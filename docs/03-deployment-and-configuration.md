@@ -1,6 +1,6 @@
 # Deployment & Configuration Guide
 
-Standalone and Reverse-Proxy setup instructions for **LAN Share Chat v3.0** using **Docker Compose**, **Node.js**, and **`Server-Lab-A2`**.
+Standalone and Reverse-Proxy setup instructions for **LAN Share Chat v3.1.0** using **Docker Compose**, **Node.js 24 LTS**, and **`Server-Lab-A2`**.
 
 ---
 
@@ -9,9 +9,10 @@ Standalone and Reverse-Proxy setup instructions for **LAN Share Chat v3.0** usin
 Copy `.env.example` to `.env` before running:
 
 ```env
-# Runtime
+# Runtime & Timezone
 NODE_ENV=production
 PORT=3000
+TZ=Asia/Bangkok
 
 # Reverse Proxy / Domain Integration (Recommended with Server-Lab-A2 Nginx Proxy Manager + Technitium DNS)
 PUBLIC_HOST=chat.lab.lan
@@ -26,11 +27,18 @@ ADMIN_PASSWORD=change_me_strong_admin_password
 # Generate 64-char hex: openssl rand -hex 32
 MEDIA_SECRET=replace_with_random_64_char_hex_secret
 
-# Upload Caps & Disk Protection — Single Source of Truth
+# Upload Caps, Disk Protection & Per-Zone Storage Quotas — Single Source of Truth
 MAX_CHAT_FILE_SIZE_MB=1024
 MAX_P2P_FILE_SIZE_MB=1024
 MAX_CHAT_FILES_BATCH=10
 MIN_DISK_FREE_MB=512
+STORAGE_MAX_TOTAL_GB=30
+STORAGE_MAX_UPLOADS_GB=20
+STORAGE_MAX_STICKERS_MB=1024
+STORAGE_MAX_CACHE_MB=4096
+STORAGE_MAX_CHUNKS_MB=2048
+STORAGE_MAX_AVATARS_MB=512
+STORAGE_WARN_DB_MB=512
 
 # Optional Standalone Storage Root (Windows/Linux without Docker)
 # STORAGE_ROOT=D:\LanShareStorage
