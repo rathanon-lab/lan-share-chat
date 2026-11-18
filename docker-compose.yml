@@ -1,0 +1,20 @@
+services:
+  lan-share-chat:
+    build: .
+    container_name: lan-share-chat
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
+      - PUBLIC_HTTPS_URL=${PUBLIC_HTTPS_URL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change_me_strong_admin_password}
+      - MEDIA_SECRET=${MEDIA_SECRET:-}
+      - MAX_CHAT_FILE_SIZE_MB=${MAX_CHAT_FILE_SIZE_MB:-1024}
+      - MAX_P2P_FILE_SIZE_MB=${MAX_P2P_FILE_SIZE_MB:-1024}
+    volumes:
+      - ./storage:/app/storage
+    # When deploying behind Server-Lab-A2 Nginx Proxy Manager (https://chat.lab.lan):
+    #   Nginx terminates HTTPS at the edge and proxies plain HTTP -> http://lan-share-chat:3000
