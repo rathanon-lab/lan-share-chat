@@ -3,14 +3,15 @@ import fs from 'fs';
 import path from 'path';
 import {
   ADMIN_PASSWORD,
+  MAX_CHAT_FILES_BATCH,
   MAX_CHAT_FILE_SIZE_MB,
   MAX_P2P_FILE_SIZE_MB,
-  avatarsDir,
-  stickersStorageDir,
-  uploadsDir,
+  MIN_DISK_FREE_MB,
   videoCacheDir,
 } from '../config';
 import { logActivity } from '../../src/lib/db';
+import type { RuntimeStorageSummary } from '../../src/types/chat';
+import { getRuntimeStorageReport } from './storageRuntime';
 
 export interface FfmpegCapability {
   available: boolean;
@@ -41,6 +42,7 @@ export interface EnvDiagnosticLog {
 export interface ReadOnlyEnvStatusResponse {
   readOnly: true;
   ffmpeg: FfmpegCapability;
+  runtime: RuntimeStorageSummary;
   missingCount: number;
   items: EnvAuditItem[];
   envLogs: EnvDiagnosticLog[];
@@ -140,28 +142,28 @@ export function clearEnvDiagnosticLogs(): ReadOnlyEnvStatusResponse {
   return getReadOnlyEnvAudit();
 }
 
-function checkDirWritable(dirPath: string): boolean {
-  try {
-    fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function getReadOnlyEnvAudit(): ReadOnlyEnvStatusResponse {
   const ffmpeg = probeFfmpegCapability();
+  const runtime = getRuntimeStorageReport();
   const hasAdminPwd = Boolean(process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length > 0);
   const hasMediaSecret = Boolean(process.env.MEDIA_SECRET && process.env.MEDIA_SECRET.trim().length > 0);
   const publicHost = process.env.PUBLIC_HOST?.trim() || null;
   const nodeEnv = process.env.NODE_ENV || 'development';
-  const storageOk =
-    checkDirWritable(uploadsDir) &&
-    checkDirWritable(videoCacheDir) &&
-    checkDirWritable(avatarsDir) &&
-    checkDirWritable(stickersStorageDir);
+  const storageOk = runtime.zones.every((z) => z.writable);
+  const diskLow = runtime.minDiskFreeMb > 0 && runtime.diskFreeMb < runtime.minDiskFreeMb;
 
   const items: EnvAuditItem[] = [
+    {
+      key: 'RUNTIME_MODE',
+      label: 'Server Execution Mode & Platform',
+      category: 'runtime',
+      status: 'ok',
+      valuePreview: `${runtime.platformLabel} | Node ${runtime.nodeVersion}`,
+      hint:
+        runtime.executionMode === 'docker'
+          ? 'ตรวจจับ Docker Container อัตโนมัติ พร้อมตรวจสอบ Isolated Volumes'
+          : 'รันแบบ Standalone บน OS โดยตรง (รองรับการย้าย Storage ผ่าน STORAGE_ROOT)',
+    },
     {
       key: 'FFMPEG_PATH',
       label: 'FFmpeg Video Compatibility Transcoder',
@@ -194,19 +196,23 @@ export function getReadOnlyEnvAudit(): ReadOnlyEnvStatusResponse {
         : 'ยังไม่ตั้งใน .env — ระบบใช้คีย์ชั่วคราวต่อรอบ (ลิงก์เดิมจะหมดอายุเมื่อรีสตาร์ต)',
     },
     {
-      key: 'STORAGE_DIRS',
-      label: 'Persistent Storage & Preview Cache',
+      key: 'STORAGE_ZONES',
+      label: 'Segregated Storage & Disk Safety Guard',
       category: 'storage',
-      status: storageOk ? 'ok' : 'missing',
-      valuePreview: storageOk ? 'uploads, video-cache, avatars, stickers OK' : null,
-      hint: 'โฟลเดอร์จัดเก็บข้อมูลต้องอ่าน/เขียนได้',
+      status: !storageOk ? 'missing' : diskLow ? 'warning' : 'ok',
+      valuePreview: storageOk
+        ? `${runtime.zones.length} Zones OK (${runtime.isolatedVolumesCount} isolated mounts) | Free ${runtime.diskFreeMb} MB`
+        : null,
+      hint: diskLow
+        ? `พื้นที่ว่างเหลือน้อยกว่าเกณฑ์ MIN_DISK_FREE_MB=${MIN_DISK_FREE_MB} MB ระบบจะหยุดรับอัปโหลดชั่วคราวจนกว่าจะล้างแคชหรือเพิ่มพื้นที่`
+        : 'แยก 6 โซนจัดเก็บข้อมูล (db, uploads, stickers, avatars, cache, chunks) พร้อมระบบป้องกัน Disk เต็ม',
     },
     {
       key: 'RUNTIME_LIMITS',
       label: 'Runtime & Upload Quota (.env)',
       category: 'runtime',
       status: 'ok',
-      valuePreview: `NODE_ENV=${nodeEnv} | ChatMax=${MAX_CHAT_FILE_SIZE_MB}MB | P2PMax=${MAX_P2P_FILE_SIZE_MB}MB${publicHost ? ` | Host=${publicHost}` : ''}`,
+      valuePreview: `NODE_ENV=${nodeEnv} | ChatMax=${MAX_CHAT_FILE_SIZE_MB}MB (x${MAX_CHAT_FILES_BATCH}) | P2PMax=${MAX_P2P_FILE_SIZE_MB}MB | MinFree=${MIN_DISK_FREE_MB}MB${publicHost ? ` | Host=${publicHost}` : ''}`,
       hint: 'แก้ไขได้ในไฟล์ .env แล้วปิด-เปิดเซิร์ฟเวอร์ใหม่เท่านั้น',
     },
   ];
@@ -216,6 +222,7 @@ export function getReadOnlyEnvAudit(): ReadOnlyEnvStatusResponse {
   return {
     readOnly: true,
     ffmpeg,
+    runtime,
     missingCount,
     items,
     envLogs: [...envDiagnosticLogs],

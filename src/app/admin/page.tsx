@@ -511,7 +511,11 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
           {dash.activeTab === "logs" && !dash.loading && <AdminLogsTab logs={dash.logs} />}
 
           {dash.activeTab === "env" && !dash.loading && (
-            <AdminEnvTab envStatus={dash.envStatus} onClearEnvLogs={dash.clearEnvLogs} />
+            <AdminEnvTab
+              envStatus={dash.envStatus}
+              onClearEnvLogs={dash.clearEnvLogs}
+              onPurgeEnvCache={dash.purgeEnvCache}
+            />
           )}
 
           {dash.activeTab === "settings" && (

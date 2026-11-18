@@ -226,6 +226,30 @@ export interface AdminEnvDiagnosticLog {
   createdAt: number;
 }
 
+export interface StorageZoneStatus {
+  id: 'db' | 'uploads' | 'stickers' | 'avatars' | 'cache' | 'chunks';
+  label: string;
+  path: string;
+  writable: boolean;
+  usedMb: number;
+  freeMb: number;
+  totalGb: number;
+  distinctMount: boolean;
+}
+
+export interface RuntimeStorageSummary {
+  executionMode: 'docker' | 'standalone';
+  platform: string;
+  platformLabel: string;
+  nodeVersion: string;
+  minDiskFreeMb: number;
+  diskFreeMb: number;
+  diskTotalGb: number;
+  diskUsedPercent: number;
+  isolatedVolumesCount: number;
+  zones: StorageZoneStatus[];
+}
+
 export interface AdminEnvStatusPayload {
   readOnly: true;
   ffmpeg: {
@@ -237,4 +261,5 @@ export interface AdminEnvStatusPayload {
   missingCount: number;
   items: AdminEnvAuditItem[];
   envLogs: AdminEnvDiagnosticLog[];
+  runtime?: RuntimeStorageSummary;
 }

@@ -55,6 +55,7 @@ import {
   getReadOnlyEnvAudit,
   removeCompatVideoCache,
 } from '../utils/ffmpegCompat';
+import { purgeTransientCaches } from '../utils/storageRuntime';
 
 function unlinkStoredFiles(rows: Array<{ storedName: string }>) {
   for (const row of rows) {
@@ -361,6 +362,17 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const nextStatus = clearEnvDiagnosticLogs();
     await logActivity('CLEAR_ENV_LOGS', 'admin', clientIp, 'Cleared environment diagnostic boot notice');
     return jsonOk(res, nextStatus), true;
+  }
+
+  if (pathname === '/api/admin/env-clear-cache' && req.method === 'POST') {
+    const purged = purgeTransientCaches();
+    await logActivity(
+      'PURGE_VIDEO_CACHE',
+      'admin',
+      clientIp,
+      `Purged ${purged.deletedFiles} cached files (${purged.freedMb} MB freed)`
+    );
+    return jsonOk(res, { ...getReadOnlyEnvAudit(), purged }), true;
   }
 
   if (pathname === '/api/admin/send_message' && req.method === 'POST') {

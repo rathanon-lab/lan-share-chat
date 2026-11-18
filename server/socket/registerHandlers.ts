@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import {
   checkClientRestriction,
@@ -54,7 +55,7 @@ export function registerSocketHandlers(io: SocketIOServer) {
     let deviceId =
       queryDeviceId && !wasDeleted
         ? queryDeviceId
-        : 'dev_' + Math.random().toString(36).substring(2, 11);
+        : 'id_' + crypto.randomBytes(5).toString('hex');
 
     const matchingOnlineSockets: Array<{ socketId: string; client: { deviceId?: string; browser?: string; name?: string; ip?: string; os?: string } }> = [];
     if (sessionPolicy !== 'multi_allow') {

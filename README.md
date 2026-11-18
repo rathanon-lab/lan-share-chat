@@ -55,7 +55,7 @@
 5. **`อุปกรณ์` (Device & IP Governance):** Live presence (`online`/`idle`/`offline`), search + online/restricted filters, inline rename, random alias generator, `Mute`, `แบน` (device ban), two-tone Red+Violet **`แบน+IP`** (`banned_ips`), and device deletion (`deleted_devices`).
 6. **`ชุดสติกเกอร์` (Sticker Studio):** Export `.zip` template, import single or multi-`.zip` / folder / image packs (`1–40` items per pack, `16` recommended), batch enable/disable/flip-toggle/delete packs (`POST /api/admin/stickers/batch-visibility` & `batch-delete`), and open a centered **Sticker Item Edit Modal** (`StickerItemEditModal.tsx`) with zoom, live image replacement, pack rename, and last-item delete guard.
 7. **`Activity Log`:** Searchable 90-day audit trail with human-readable summaries, full JSON payload inspector modal, and **password-confirmed log clearing** (`POST /api/admin/logs/clear`).
-8. **`.env / ระบบ` (Read-Only Environment & FFmpeg Diagnostics):** Live read-only audit (`GET /api/admin/env-status`) verifying `FFMPEG_PATH` / system FFmpeg availability, `ADMIN_PASSWORD`, `MEDIA_SECRET`, writable storage directories, and `.env` upload quotas without exposing secret values.
+8. **`.env / ระบบ` (Read-Only Environment, Runtime & Segregated Storage Audit):** Live read-only audit (`GET /api/admin/env-status`) detecting **Docker Container** vs **Standalone OS** runtime mode, inspecting free/used disk across all **6 isolated storage zones** (`db`, `uploads`, `stickers`, `avatars`, `cache`, `chunks`), enforcing **`MIN_DISK_FREE_MB`** (`HTTP 507` upload guard), offering one-click transient cache cleanup (`POST /api/admin/env-clear-cache`), and verifying `FFMPEG_PATH`, `ADMIN_PASSWORD`, `MEDIA_SECRET`, and upload quotas without exposing secret values.
 9. **`ตั้งค่า` (System Settings):** Configure Admin Avatar/Ring Color, Voice MP3, Sticker Pre-Send Mode (`fullscreen_modal` vs `docked_tray`) & Sticker Collage toggle, Delete Policy, Session Conflict Policy (`takeover` / `block` / `multi_allow`), Room Capacity (`maxConcurrentUsers`), Edit Window, Spotlight/Lock/Blur toggles, Anti-Spam thresholds, JSON Backup, standalone custom sticker pack reset, and full **Factory Reset** (restoring settings, clearing telemetry/messages/files, and resetting stickers to the built-in `starter-office-animals` pack).
 
 ---
@@ -124,10 +124,12 @@ npm run start
 ```
 
 > **Development mode:** Run `npm run dev` to launch `server.ts` + Next.js with hot reload.
+>
+> **Windows / Standalone Portable Cleanup (Optional):** After `npm run build`, if deploying as a lightweight runtime folder without dev/debug tools, run `npm run clean:portable` to prune `devDependencies`, `.next/dev`, `.next/cache`, and transient `video-cache` / `chunks` while keeping `storage/db`, `uploads`, `stickers`, and `avatars` intact. (Run `npm install` again before future `npm run build` updates.)
 
 ### System Requirements & Optional FFmpeg Setup
 
-- **Node.js 20+** (Docker image uses `node:24-bookworm-slim`) and **SQLite3** (installed via `npm install`).
+- **Node.js 24 LTS** (Docker image uses multi-stage `node:24-bookworm-slim`; supports Node 22 LTS+ locally) and **SQLite3** (installed via `npm install`).
 - **FFmpeg (Recommended for H.265 / HEVC Video Previews):**
   - **Docker:** Included automatically in [`Dockerfile`](Dockerfile).
   - **Standalone Windows / macOS / Linux:** Install FFmpeg via your OS package manager (`winget install Gyan.FFmpeg` / `brew install ffmpeg` / `apt install ffmpeg`) and ensure `ffmpeg` is on `PATH`, **or** set `FFMPEG_PATH=...` in `.env` and restart the server.

@@ -1,6 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { MAX_STICKER_ZIP_BYTES } from '../src/lib/stickerStore';
+import {
+  avatarsDir,
+  chunkStagingDir,
+  ensureStorageZoneDirs,
+  legacyUploadsDir,
+  stickerStagingDir,
+  stickersStorageDir,
+  uploadsDir,
+  videoCacheDir,
+} from '../src/lib/storagePaths';
 
 if (process.argv.includes('--prod')) {
   (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
@@ -38,18 +49,18 @@ if (!process.env.ADMIN_PASSWORD && isDevMode) {
   console.warn('[Config] ADMIN_PASSWORD not set; using development-only fallback. Set ADMIN_PASSWORD in .env.');
 }
 
-// ─── Storage Directories ───────────────────────────────────────
-export const uploadsDir = path.resolve(process.cwd(), 'storage', 'uploads');
-export const videoCacheDir = path.resolve(process.cwd(), 'storage', 'video-cache');
-export const chunkStagingDir = path.resolve(process.cwd(), 'storage', 'chunks');
-export const avatarsDir = path.resolve(process.cwd(), 'storage', 'avatars');
-export const stickersStorageDir = path.resolve(process.cwd(), 'storage', 'stickers');
-export const stickerStagingDir = path.resolve(process.cwd(), 'storage', 'sticker-staging');
-export const legacyUploadsDir = path.resolve(process.cwd(), 'uploads');
+// ─── Storage Directories (Segregated Zones from storagePaths.ts) ─
+export {
+  avatarsDir,
+  chunkStagingDir,
+  legacyUploadsDir,
+  stickerStagingDir,
+  stickersStorageDir,
+  uploadsDir,
+  videoCacheDir,
+};
 
-for (const dir of [uploadsDir, videoCacheDir, chunkStagingDir, avatarsDir, stickersStorageDir, stickerStagingDir]) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+ensureStorageZoneDirs();
 
 // Purge stale temporary chunks/staging files older than 2 hours on boot
 for (const tmpDir of [chunkStagingDir, stickerStagingDir]) {
@@ -72,7 +83,11 @@ export const MAX_P2P_FILE_SIZE_MB = Math.max(
   1,
   parseInt(process.env.MAX_P2P_FILE_SIZE_MB || String(MAX_CHAT_FILE_SIZE_MB), 10) || MAX_CHAT_FILE_SIZE_MB
 );
-export const MAX_CHAT_FILES_BATCH = 10;
+export const MAX_CHAT_FILES_BATCH = Math.max(
+  1,
+  Math.min(50, parseInt(process.env.MAX_CHAT_FILES_BATCH || '10', 10) || 10)
+);
+export const MIN_DISK_FREE_MB = Math.max(0, parseInt(process.env.MIN_DISK_FREE_MB || '512', 10) || 0);
 
 // ─── Multer Uploaders ──────────────────────────────────────────
 export const upload = multer({
@@ -98,7 +113,7 @@ export const stickerUpload = multer({
     },
   }),
   limits: {
-    fileSize: 105 * 1024 * 1024, // Supports up to 100MB ZIP or up to 48 sticker files
+    fileSize: MAX_STICKER_ZIP_BYTES + 5 * 1024 * 1024, // Synced with MAX_STICKER_ZIP_BYTES (+5MB multipart overhead)
     files: 48,
   },
 });

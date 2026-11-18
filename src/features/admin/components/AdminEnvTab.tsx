@@ -1,16 +1,18 @@
 "use client";
 
 import React from "react";
-import { AlertTriangle, CheckCircle2, Lock, Terminal, Trash2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Container, HardDrive, Lock, Monitor, Terminal, Trash2, XCircle } from "lucide-react";
 import type { AdminEnvStatusPayload } from "@/types/chat";
 import { FB, css } from "@/features/admin/theme";
 
 export function AdminEnvTab({
   envStatus,
   onClearEnvLogs,
+  onPurgeEnvCache,
 }: {
   envStatus: AdminEnvStatusPayload | null;
   onClearEnvLogs: () => void;
+  onPurgeEnvCache?: () => void;
 }) {
   if (!envStatus) {
     return (
@@ -19,6 +21,10 @@ export function AdminEnvTab({
       </div>
     );
   }
+
+  const runtime = envStatus.runtime;
+  const isDocker = runtime?.executionMode === "docker";
+  const diskLow = Boolean(runtime && runtime.minDiskFreeMb > 0 && runtime.diskFreeMb < runtime.minDiskFreeMb);
 
   return (
     <div data-testid="admin-env-tab" style={{ maxWidth: "860px", display: "flex", flexDirection: "column", gap: "18px" }}>
@@ -58,6 +64,131 @@ export function AdminEnvTab({
           </div>
         </div>
       </div>
+
+      {/* Runtime Environment & 6-Zone Segregated Storage Panel */}
+      {runtime && (
+        <div
+          data-testid="env-runtime-panel"
+          style={{
+            ...css.card,
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+            border: `1px solid ${diskLow ? "#FCA5A5" : FB.border}`,
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "10px",
+                  background: isDocker ? "#DBEAFE" : "#EDE9FE",
+                  color: isDocker ? "#1D4ED8" : "#6D28D9",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {isDocker ? <Container size={18} /> : <Monitor size={18} />}
+              </div>
+              <div>
+                <div style={{ fontWeight: "700", fontSize: "14px", color: FB.textPrimary, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span>Runtime &amp; Storage Self-Awareness</span>
+                  <span
+                    data-testid="env-execution-mode-badge"
+                    style={{
+                      padding: "2px 9px",
+                      borderRadius: "999px",
+                      fontSize: "11px",
+                      fontWeight: "700",
+                      background: isDocker ? "#DBEAFE" : "#F3E8FF",
+                      color: isDocker ? "#1E40AF" : "#5B21B6",
+                    }}
+                  >
+                    {runtime.platformLabel}
+                  </span>
+                </div>
+                <div style={{ fontSize: "12px", color: FB.textSecondary, marginTop: "2px" }}>
+                  Node {runtime.nodeVersion} · คงเหลือ {runtime.diskFreeMb.toLocaleString()} MB / {runtime.diskTotalGb} GB
+                  {" "}(ใช้แล้ว {runtime.diskUsedPercent}% · เกณฑ์ป้องกันดิสก์เต็ม ≥ {runtime.minDiskFreeMb} MB)
+                </div>
+              </div>
+            </div>
+
+            {onPurgeEnvCache && (
+              <button
+                type="button"
+                data-testid="env-purge-cache-btn"
+                onClick={onPurgeEnvCache}
+                style={{ ...css.btn("secondary"), fontSize: "12px" }}
+              >
+                <Trash2 size={14} /> ล้างแคชวิดีโอ &amp; Chunk ชั่วคราว
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+              gap: "10px",
+            }}
+          >
+            {runtime.zones.map((zone) => (
+              <div
+                key={zone.id}
+                data-testid={`storage-zone-${zone.id}`}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  background: "#F8FAFC",
+                  border: `1px solid ${zone.writable ? FB.border : "#FECACA"}`,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+                  <span style={{ fontWeight: "700", fontSize: "12px", color: FB.textPrimary, display: "flex", alignItems: "center", gap: "5px" }}>
+                    <HardDrive size={13} /> {zone.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: "700",
+                      padding: "1px 6px",
+                      borderRadius: "999px",
+                      background: zone.distinctMount ? "#DBEAFE" : "#E2E8F0",
+                      color: zone.distinctMount ? "#1E40AF" : "#334155",
+                    }}
+                  >
+                    {zone.distinctMount ? "Isolated Mount" : "Local Zone"}
+                  </span>
+                </div>
+                <div style={{ fontSize: "11px", color: FB.textSecondary }}>
+                  ใช้ไป {zone.usedMb.toLocaleString()} MB · ว่าง {zone.freeMb.toLocaleString()} MB
+                </div>
+                <div
+                  title={zone.path}
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: "11px",
+                    color: FB.textMuted,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {zone.path}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Environment Table */}
       <div style={{ ...css.card, padding: 0, overflow: "hidden" }}>

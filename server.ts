@@ -1,11 +1,12 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { createServer as createHttpsServer } from 'https';
-import { parse } from 'url';
+import type { ParsedUrlQuery } from 'querystring';
+import type { UrlWithParsedQuery } from 'url';
 import next from 'next';
 import { Server as SocketIOServer } from 'socket.io';
+import { MIN_DISK_FREE_MB, isDevMode, port, uploadsDir } from './server/config';
 import { ensureLanTlsCertificates } from './src/lib/tlsCerts';
 import { ensureBuiltInStickerPacks } from './src/lib/stickerStore';
-import { isDevMode, port, uploadsDir } from './server/config';
 import {
   getLocalIp,
   getPublicHost,
@@ -16,6 +17,37 @@ import { handlePublicAndUserApi } from './server/routes/userRoutes';
 import { handleAdminApi } from './server/routes/adminRoutes';
 import { registerSocketHandlers } from './server/socket/registerHandlers';
 import { initializeEnvironmentDiagnostics } from './server/utils/ffmpegCompat';
+import { detectRuntimeEnvironment } from './server/utils/storageRuntime';
+
+function parseIncomingUrl(rawUrl: string | undefined): UrlWithParsedQuery {
+  const safeRaw = rawUrl && rawUrl.startsWith('/') ? rawUrl : `/${rawUrl || ''}`;
+  const u = new URL(safeRaw, 'http://127.0.0.1');
+  const query: ParsedUrlQuery = {};
+  for (const [k, v] of u.searchParams.entries()) {
+    const prev = query[k];
+    if (prev === undefined) {
+      query[k] = v;
+    } else if (Array.isArray(prev)) {
+      prev.push(v);
+    } else {
+      query[k] = [prev, v];
+    }
+  }
+  return {
+    protocol: null,
+    slashes: null,
+    auth: null,
+    host: null,
+    port: null,
+    hostname: null,
+    hash: u.hash || null,
+    search: u.search || null,
+    query,
+    pathname: u.pathname,
+    path: `${u.pathname}${u.search}`,
+    href: `${u.pathname}${u.search}${u.hash}`,
+  };
+}
 
 const app = next({ dev: isDevMode });
 const handle = app.getRequestHandler();
@@ -44,7 +76,7 @@ app
     }
 
     const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
-      const parsedUrl = parse(req.url!, true);
+      const parsedUrl = parseIncomingUrl(req.url);
       const pathname = parsedUrl.pathname || '/';
 
       if (pathname.startsWith('/api/admin/')) {
@@ -53,7 +85,12 @@ app
       }
 
       if (pathname.startsWith('/uploads/') || pathname.startsWith('/api/')) {
-        const handled = await handlePublicAndUserApi(req, res, pathname, parsedUrl.query as Record<string, string | string[] | undefined>);
+        const handled = await handlePublicAndUserApi(
+          req,
+          res,
+          pathname,
+          parsedUrl.query as Record<string, string | string[] | undefined>
+        );
         if (handled) return;
       }
 
@@ -87,8 +124,10 @@ app
         process.env.PUBLIC_HTTPS_URL?.trim() ||
         (process.env.PUBLIC_HOST?.trim() ? `https://${publicHost} (Reverse Proxy HTTPS)` : null);
 
+      const runtimeInfo = detectRuntimeEnvironment();
       console.log('====================================================================');
       console.log(`> LAN Share Chat v3.0 [${modeLabel}]`);
+      console.log(`> Runtime Mode : ${runtimeInfo.platformLabel} (Node ${runtimeInfo.nodeVersion})`);
       console.log(`> Local HTTP   : http://localhost:${port}`);
       console.log(`> LAN HTTP     : http://${publicHost}:${port}`);
       if (proxyHint) {
@@ -96,7 +135,7 @@ app
       }
       console.log(`> Admin Panel  : http://${publicHost}:${port}/admin`);
       console.log('> Features     : Chat=ON | Vault=ON | P2P=ON | UnifiedEmoji=ON | Stickers=ON');
-      console.log(`> Storage Dir  : ${uploadsDir}`);
+      console.log(`> Storage Dir  : ${uploadsDir} (Disk Guard >= ${MIN_DISK_FREE_MB} MB)`);
       console.log(
         `> Video FFmpeg : ${
           ffmpegCap.available

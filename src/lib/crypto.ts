@@ -15,7 +15,13 @@ function getSecretSeed(): string {
   return globalThis.__lanShareEphemeralSecret;
 }
 
-const KEY = crypto.scryptSync(getSecretSeed(), 'lan-share-salt-v2', 32);
+let cachedKey: Buffer | null = null;
+function getKey(): Buffer {
+  if (!cachedKey) {
+    cachedKey = crypto.scryptSync(getSecretSeed(), 'lan-share-salt-v2', 32);
+  }
+  return cachedKey;
+}
 
 export interface MediaTokenPayload {
   /** Stored filename inside storage/uploads/ (never exposed in URL) */
@@ -41,7 +47,7 @@ export function encryptMediaToken(payload: {
   exp?: number;
 }): string {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', KEY, iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
 
   const data: MediaTokenPayload = {
     f: payload.storedName,
@@ -90,7 +96,7 @@ export function decryptMediaToken(token: string): MediaTokenPayload | null {
     const authTag = raw.subarray(12, 28);
     const ciphertext = raw.subarray(28);
 
-    const decipher = crypto.createDecipheriv('aes-256-gcm', KEY, iv);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getKey(), iv);
     decipher.setAuthTag(authTag);
 
     const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);

@@ -2,9 +2,9 @@ import sqlite3 from 'sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { ADMIN_DEFAULT_AVATAR_URL, DEFAULT_ADMIN_RING_COLOR } from '../avatars';
+import { dbDir } from '../storagePaths';
 
 // Private SQLite storage directory (kept outside public static assets)
-const dbDir = path.resolve(process.cwd(), 'storage', 'db');
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }

@@ -223,6 +223,18 @@ export function useAdminDashboard(token: string) {
     }
   }, [apiFetch, notify]);
 
+  const purgeEnvCache = useCallback(async () => {
+    try {
+      const data = await apiFetch("/api/admin/env-clear-cache", { method: "POST" });
+      if (data && typeof data === "object") setEnvStatus(data);
+      const freedMb = data?.purged?.freedMb ?? 0;
+      const deletedFiles = data?.purged?.deletedFiles ?? 0;
+      notify(`ล้างแคชชั่วคราวแล้ว ${deletedFiles} ไฟล์ (${freedMb} MB)`);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : "Purge cache failed", "error");
+    }
+  }, [apiFetch, notify]);
+
   const loadServerInfo = useCallback(async () => {
     setCanUseMicContext(
       typeof window !== "undefined" &&
@@ -618,6 +630,7 @@ export function useAdminDashboard(token: string) {
     logs,
     envStatus,
     clearEnvLogs,
+    purgeEnvCache,
     alerts,
     stickerPacks,
     stickerLimits,

@@ -14,7 +14,23 @@ services:
       - MEDIA_SECRET=${MEDIA_SECRET:-}
       - MAX_CHAT_FILE_SIZE_MB=${MAX_CHAT_FILE_SIZE_MB:-1024}
       - MAX_P2P_FILE_SIZE_MB=${MAX_P2P_FILE_SIZE_MB:-1024}
+      - MAX_CHAT_FILES_BATCH=${MAX_CHAT_FILES_BATCH:-10}
+      - MIN_DISK_FREE_MB=${MIN_DISK_FREE_MB:-512}
     volumes:
-      - ./storage:/app/storage
+      # Segregated Docker Virtual Volumes (override via .env e.g. STORAGE_UPLOADS_VOL=/mnt/disk2/uploads or ./storage/uploads)
+      - ${STORAGE_DB_VOL:-lan_chat_db}:/app/storage/db
+      - ${STORAGE_UPLOADS_VOL:-lan_chat_uploads}:/app/storage/uploads
+      - ${STORAGE_STICKERS_VOL:-lan_chat_stickers}:/app/storage/stickers
+      - ${STORAGE_AVATARS_VOL:-lan_chat_avatars}:/app/storage/avatars
+      - ${STORAGE_CACHE_VOL:-lan_chat_cache}:/app/storage/video-cache
+      - ${STORAGE_CHUNKS_VOL:-lan_chat_chunks}:/app/storage/chunks
     # When deploying behind Server-Lab-A2 Nginx Proxy Manager (https://chat.lab.lan):
     #   Nginx terminates HTTPS at the edge and proxies plain HTTP -> http://lan-share-chat:3000
+
+volumes:
+  lan_chat_db:
+  lan_chat_uploads:
+  lan_chat_stickers:
+  lan_chat_avatars:
+  lan_chat_cache:
+  lan_chat_chunks:

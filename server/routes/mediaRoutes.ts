@@ -25,6 +25,7 @@ import {
   verifyStreamTicket,
 } from '../../src/lib/crypto';
 import { parseDevicePlatform } from '../../src/lib/deviceMeta';
+import { checkUploadDiskGuard, moveFileAcrossZones } from '../utils/storageRuntime';
 import {
   isAuthorizedAdminToken,
   jsonErr,
@@ -212,6 +213,12 @@ export async function processMultiUpload(
       jsonErr(res, guard.code === 'RATE_LIMIT' ? 429 : 403, guard.message || 'Upload blocked');
       return true;
     }
+  }
+  const declaredBytes = parseInt(String(req.headers['content-length'] || '0'), 10) || 0;
+  const diskCheck = checkUploadDiskGuard(declaredBytes);
+  if (!diskCheck.ok) {
+    jsonErr(res, 507, diskCheck.error || 'Insufficient storage space');
+    return true;
   }
   req.setTimeout(0);
   const uploadAny = upload.any();
@@ -440,6 +447,11 @@ export async function handleChunkUpload(req: IncomingMessage, res: ServerRespons
       jsonErr(res, 413, `File "${fileName}" exceeds limit of ${MAX_CHAT_FILE_SIZE_MB}MB`);
       return;
     }
+    const diskCheck = checkUploadDiskGuard(chunkIndex === 0 ? totalSize : 0);
+    if (!diskCheck.ok) {
+      jsonErr(res, 507, diskCheck.error || 'Insufficient storage space');
+      return;
+    }
 
     const buf = await readBinaryChunk(req);
     let session = chunkSessions.get(uploadId);
@@ -530,7 +542,7 @@ export async function handleChunkComplete(req: IncomingMessage, res: ServerRespo
     }
 
     const finalPath = path.join(uploadsDir, session.storedName);
-    await fs.promises.rename(session.tempPath, finalPath);
+    await moveFileAcrossZones(session.tempPath, finalPath);
     const stat = await fs.promises.stat(finalPath);
     if (stat.size > MAX_CHAT_FILE_BYTES) {
       await fs.promises.unlink(finalPath).catch(() => {});

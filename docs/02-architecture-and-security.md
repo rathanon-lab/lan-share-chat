@@ -26,6 +26,7 @@ lan-share-chat/
 │   │   └── registerHandlers.ts             # Session policy, capacity guard, chat, collages, read receipts & WebRTC
 │   └── utils/
 │       ├── ffmpegCompat.ts                 # Read-only .env/FFmpeg probe & lazy H.265 -> H.264 preview cache
+│       ├── storageRuntime.ts               # Docker vs Standalone detection, 6-zone probe, ENOSPC disk guard & EXDEV move
 │       └── zipStream.ts                    # On-the-fly ZIP stream builder
 ├── tools/
 │   └── loadgen-docker/                     # Companion Docker Load Generator & Stress-Test Studio (port 3099)
@@ -45,7 +46,7 @@ lan-share-chat/
     │   ├── p2p/                            # useWebRTCTransfer hook, P2PSendModal, P2PReceiveModal
     │   └── admin/                          # LoginScreen, AdminOverviewTab, AdminChatTab, StickerManagerTab, StickerItemEditModal, AdminEnvTab, AdminSettingsTab
     ├── components/                         # ZoomableMediaStage, UserAvatar, ProfileModal, AvatarCropModal
-    └── lib/                                # db/* (modular SQLite repos), crypto.ts, stickerStore.ts, stickerMeta.ts, secureMedia.tsx, filePreviewer.tsx
+    └── lib/                                # db/* (modular SQLite repos), crypto.ts, storagePaths.ts, stickerStore.ts, stickerMeta.ts, secureMedia.tsx, filePreviewer.tsx
 ```
 
 ---

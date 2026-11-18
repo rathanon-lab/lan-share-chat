@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
+import { stickersStorageDir } from './storagePaths';
 import {
   upsertStickerPack,
   getStickerPacksWithItems,
@@ -18,7 +19,7 @@ export const MAX_STICKERS_PER_PACK = 40;
 export const MAX_STICKER_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB per sticker image
 export const MAX_STICKER_ZIP_BYTES = 100 * 1024 * 1024; // 100 MB zip archive
 
-export const STICKERS_STORAGE_DIR = path.resolve(process.cwd(), 'storage', 'stickers');
+export const STICKERS_STORAGE_DIR = stickersStorageDir;
 export const STICKERS_BUILTIN_DIR = path.resolve(process.cwd(), 'public', 'stickers');
 
 if (!fs.existsSync(STICKERS_STORAGE_DIR)) {
@@ -86,7 +87,7 @@ export async function ensureBuiltInStickerPacks(): Promise<void> {
       const itemsRaw = Array.isArray(raw.items) ? raw.items : [];
       if (itemsRaw.length < MIN_STICKERS_PER_PACK) continue;
 
-      const items = itemsRaw.slice(0, MAX_STICKERS_PER_PACK).map((it: any, idx: number) => {
+      const items = itemsRaw.slice(0, MAX_STICKERS_PER_PACK).map((it: ManifestItemRaw, idx: number) => {
         const fileName = sanitizeAssetFilename(it.file || `${String(idx + 1).padStart(2, '0')}.webp`);
         return {
           stickerId: sanitizeSlug(it.id || path.parse(fileName).name, `st-${idx + 1}`),
@@ -133,6 +134,22 @@ export function resolveStickerAssetFile(packId: string, fileName: string): { fil
   return null;
 }
 
+interface ManifestItemRaw {
+  id?: string;
+  file?: string;
+  alt?: string;
+  keywords?: string;
+}
+
+interface StickerManifestRaw {
+  id?: string;
+  name?: string;
+  description?: string;
+  main?: string;
+  tab?: string;
+  items?: ManifestItemRaw[];
+}
+
 export interface IncomingStickerFile {
   relativePath: string;
   buffer: Buffer;
@@ -157,11 +174,11 @@ async function persistImportedStickerPack(params: {
     buffer: e.buffer,
   }));
 
-  let manifest: any = {};
+  let manifest: StickerManifestRaw = {};
   const manifestEntry = relEntries.find((e) => path.basename(e.rel).toLowerCase() === 'manifest.json');
   if (manifestEntry) {
     try {
-      manifest = JSON.parse(manifestEntry.buffer.toString('utf-8'));
+      manifest = JSON.parse(manifestEntry.buffer.toString('utf-8')) as StickerManifestRaw;
     } catch {
       manifest = {};
     }
@@ -211,7 +228,7 @@ async function persistImportedStickerPack(params: {
   const targetDir = path.join(STICKERS_STORAGE_DIR, packId);
   fs.mkdirSync(targetDir, { recursive: true });
 
-  const manifestItemsMap = new Map<string, any>();
+  const manifestItemsMap = new Map<string, ManifestItemRaw>();
   if (Array.isArray(manifest.items)) {
     for (const it of manifest.items) {
       if (it?.file) manifestItemsMap.set(path.parse(String(it.file)).name.toLowerCase(), it);
