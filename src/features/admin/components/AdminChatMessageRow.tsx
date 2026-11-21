@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Ban, Clock, Download, Eye, File as FileIcon, History, Play, Shield, Trash2 } from "lucide-react";
+import { Ban, Clock, Download, Eye, File as FileIcon, FileX, History, ImageOff, Play, Shield, Trash2, VideoOff } from "lucide-react";
 import type { ChatMessage, SenderDeviceStatus, SystemSettings } from "@/types/chat";
 import type { PreviewableFile } from "@/lib/filePreviewer";
 import { isRichPreviewSupported } from "@/lib/filePreviewer";
@@ -303,6 +303,47 @@ export function AdminChatMessageRow({
                   const isImg = att.mimeType?.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$/i.test(att.fileName || "");
                   const isVid = att.mimeType?.startsWith("video/") || /\.(mp4|m4v|mov|webm|ogv)$/i.test(att.fileName || "");
                   const isAud = att.mimeType?.startsWith("audio/") || /\.(mp3|wav|m4a|ogg)$/i.test(att.fileName || "");
+                  if (att.isDeleted) {
+                    return (
+                      <div
+                        key={idx}
+                        data-testid={`admin-chat-att-deleted-${msg.id}-${idx}`}
+                        style={{
+                          border: `1px dashed ${FB.border}`,
+                          borderRadius: "10px",
+                          padding: "10px",
+                          background: "#F1F5F9",
+                          width: isAud ? "250px" : "195px",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          color: "#64748B",
+                          textAlign: "center",
+                        }}
+                      >
+                        {isVid ? <VideoOff size={20} /> : isImg ? <ImageOff size={20} /> : <FileX size={20} />}
+                        <span style={{ fontSize: "11px", fontWeight: "600" }}>
+                          {isVid ? "วิดีโอนี้ถูกลบแล้ว" : isImg ? "รูปภาพนี้ถูกลบแล้ว" : "ไฟล์นี้ถูกลบแล้ว"}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            color: "#94A3B8",
+                            textDecoration: "line-through",
+                            maxWidth: "100%",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={att.fileName}
+                        >
+                          {att.fileName}
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={idx} style={{ border: `1px solid ${FB.border}`, borderRadius: "10px", padding: "6px", background: "#F8FAFC", width: isAud ? "250px" : "195px" }}>
                       {isImg && att.mediaToken && (

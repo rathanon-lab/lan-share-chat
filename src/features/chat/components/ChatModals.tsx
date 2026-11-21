@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, History, LayoutGrid, Maximize2, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, History, LayoutGrid, Maximize2, RotateCw, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { ChatAttachment } from "@/types/chat";
 import { formatBytes, isVideoAttachment } from "@/features/chat/lib/formatters";
-import { SecureImage, downloadEncryptedMedia } from "@/lib/secureMedia";
+import { SecureImage, downloadEncryptedMedia, isMediaTokenGone } from "@/lib/secureMedia";
 import { CustomVideoPlayer } from "@/features/chat/components/CustomVideoPlayer";
 import { ZoomableMediaStage } from "@/components/ZoomableMediaStage";
 
@@ -36,7 +36,36 @@ export function LightboxModal({
 }) {
   const [zoom, setZoom] = useState(1);
   const activeItem = lightbox.items[lightbox.index];
+  const activeToken = activeItem?.mediaToken || "";
   const isCurrentVideo = isVideoAttachment(activeItem);
+  const [rotationState, setRotationState] = useState<{ token: string; deg: 0 | 90 | 180 | 270 }>({
+    token: activeToken,
+    deg: 0,
+  });
+  const imageRotation = rotationState.token === activeToken ? rotationState.deg : 0;
+  const isQuarterTurn = imageRotation === 90 || imageRotation === 270;
+
+  const rotateImage = useCallback(() => {
+    setRotationState((prev) => {
+      const cur = prev.token === activeToken ? prev.deg : 0;
+      const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
+      return { token: activeToken, deg: next };
+    });
+  }, [activeToken]);
+
+  useEffect(() => {
+    if (isCurrentVideo) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        rotateImage();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isCurrentVideo, rotateImage]);
 
   return (
     <div
@@ -73,19 +102,21 @@ export function LightboxModal({
               <span className="sm:hidden">อัลบั้ม</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              const current = lightbox.items[lightbox.index];
-              if (current?.mediaToken) {
-                downloadEncryptedMedia(current.mediaToken, current.fileName);
-              }
-            }}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl transition-colors cursor-pointer"
-          >
-            <Download size={15} />
-            <span className="hidden sm:inline">ดาวน์โหลด</span>
-          </button>
+          {!(activeItem?.isDeleted || isMediaTokenGone(activeToken)) && (
+            <button
+              type="button"
+              onClick={() => {
+                const current = lightbox.items[lightbox.index];
+                if (current?.mediaToken) {
+                  downloadEncryptedMedia(current.mediaToken, current.fileName);
+                }
+              }}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl transition-colors cursor-pointer"
+            >
+              <Download size={15} />
+              <span className="hidden sm:inline">ดาวน์โหลด</span>
+            </button>
+          )}
           <button
             type="button"
             data-testid="lightbox-close-btn"
@@ -140,6 +171,23 @@ export function LightboxModal({
           >
             <Maximize2 size={15} />
           </button>
+          <div className="w-6 h-px bg-white/15 my-0.5" />
+          <button
+            type="button"
+            data-testid="lightbox-rotate-btn"
+            onClick={rotateImage}
+            title="หมุนภาพ 90° (ปุ่ม R)"
+            className={`w-9 min-h-[36px] py-1 rounded-xl flex flex-col items-center justify-center gap-0.5 cursor-pointer transition ${
+              imageRotation !== 0
+                ? "bg-blue-600 hover:bg-blue-500 text-white"
+                : "bg-white/10 hover:bg-white/20 text-white"
+            }`}
+          >
+            <RotateCw size={16} />
+            {imageRotation !== 0 && (
+              <span className="text-[9px] font-bold leading-none">{imageRotation}°</span>
+            )}
+          </button>
         </div>
       )}
 
@@ -176,13 +224,17 @@ export function LightboxModal({
             key={activeItem.mediaToken}
             zoom={zoom}
             onZoomChange={setZoom}
+            rotation={imageRotation}
+            contentTestId="lightbox-image-stage"
             onBackgroundClick={onClose}
             className="w-full h-full"
           >
             <SecureImage
               token={activeItem.mediaToken}
               alt={activeItem.fileName}
-              className="max-h-[80dvh] max-w-full object-contain rounded-xl shadow-2xl pointer-events-none"
+              className={`${
+                isQuarterTurn ? "max-w-[72dvh] max-h-[82vw]" : "max-h-[80dvh] max-w-full"
+              } object-contain rounded-xl shadow-2xl pointer-events-none`}
             />
           </ZoomableMediaStage>
         )}

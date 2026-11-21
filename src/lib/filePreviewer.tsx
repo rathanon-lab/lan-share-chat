@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import {
   Loader2, AlertTriangle, ShieldAlert, ChevronLeft, ChevronRight,
-  ZoomIn, ZoomOut, Download, FileArchive, FileText, Code2, X, FileCheck2, RotateCcw
+  ZoomIn, ZoomOut, Download, FileArchive, FileText, Code2, X, FileCheck2, RotateCcw, RotateCw
 } from 'lucide-react';
 import {
   fetchEncryptedMediaBlob,
@@ -384,6 +384,38 @@ export function UniversalFilePreviewModal({
   onClose: () => void;
 }) {
   const kind = getFilePreviewKind(file.fileName, file.mimeType);
+  const [imgRotState, setImgRotState] = useState<{ token: string; deg: 0 | 90 | 180 | 270 }>({
+    token: file.mediaToken,
+    deg: 0,
+  });
+  const imageRotation = imgRotState.token === file.mediaToken ? imgRotState.deg : 0;
+  const isQuarterTurn = imageRotation === 90 || imageRotation === 270;
+
+  const rotatePreviewImage = () => {
+    setImgRotState((prev) => {
+      const cur = prev.token === file.mediaToken ? prev.deg : 0;
+      const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
+      return { token: file.mediaToken, deg: next };
+    });
+  };
+
+  useEffect(() => {
+    if (kind !== 'image') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        setImgRotState((prev) => {
+          const cur = prev.token === file.mediaToken ? prev.deg : 0;
+          const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
+          return { token: file.mediaToken, deg: next };
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [kind, file.mediaToken]);
 
   return (
     <div
@@ -422,6 +454,22 @@ export function UniversalFilePreviewModal({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {kind === 'image' && (
+              <button
+                type="button"
+                data-testid="preview-image-rotate-btn"
+                onClick={rotatePreviewImage}
+                title="หมุนภาพ 90° (ปุ่ม R)"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                  imageRotation !== 0
+                    ? 'bg-blue-50 border-blue-300 text-blue-700'
+                    : 'bg-white border-gray-200 hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <RotateCw size={14} />
+                <span>{imageRotation !== 0 ? `${imageRotation}°` : 'หมุน'}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => downloadEncryptedMedia(file.mediaToken, file.fileName)}
@@ -442,12 +490,24 @@ export function UniversalFilePreviewModal({
 
         <div className="p-4 overflow-y-auto flex-1 flex flex-col items-center justify-start bg-gray-50/40">
           {kind === 'image' && (
-            <SecureImage
-              token={file.mediaToken}
-              alt={file.fileName}
-              fileName={file.fileName}
-              className="max-h-[72vh] max-w-full rounded-xl object-contain shadow my-auto"
-            />
+            <div
+              data-testid="preview-image-stage"
+              data-rotation={imageRotation}
+              className="w-full min-h-[320px] flex-1 flex items-center justify-center overflow-hidden my-auto"
+            >
+              <SecureImage
+                token={file.mediaToken}
+                alt={file.fileName}
+                fileName={file.fileName}
+                style={{
+                  transform: imageRotation ? `rotate(${imageRotation}deg)` : undefined,
+                  transition: 'transform 160ms ease-out',
+                }}
+                className={`${
+                  isQuarterTurn ? 'max-w-[64vh] max-h-[75vw]' : 'max-h-[72vh] max-w-full'
+                } rounded-xl object-contain shadow`}
+              />
+            </div>
           )}
           {kind === 'video' && (
             <CustomVideoPlayer token={file.mediaToken} autoPlay className="my-auto" />

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Film, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, Film, ImageOff, Loader2, RefreshCw, VideoOff } from 'lucide-react';
 import { sanitizeDownloadFileName } from '@/lib/fileNameGuard';
 
 const blobUrlCache = new Map<string, string>();
@@ -10,8 +10,51 @@ const inFlightRequests = new Map<string, Promise<string>>();
 const thumbUrlCache = new Map<string, string | null>();
 const inFlightThumbs = new Map<string, Promise<string | null>>();
 const streamUrlCache = new Map<string, { url: string; exp: number }>();
+const goneMediaTokens = new Set<string>();
 const mediaResolvedListeners = new Map<string, Set<() => void>>();
 let cachedVideoTranscodeAvail: boolean | null = null;
+
+export class MediaGoneError extends Error {
+  readonly status: number;
+  constructor(status = 410, message = 'Media file has been deleted') {
+    super(message);
+    this.name = 'MediaGoneError';
+    this.status = status;
+  }
+}
+
+export function isMediaGoneError(err: unknown): boolean {
+  return err instanceof MediaGoneError || (err instanceof Error && err.name === 'MediaGoneError');
+}
+
+export function isMediaTokenGone(token: string): boolean {
+  return Boolean(token) && goneMediaTokens.has(token);
+}
+
+export function evictMediaCache(tokens: string[], markGone = true): void {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  for (const token of tokens) {
+    if (!token) continue;
+    const blobUrl = blobUrlCache.get(token);
+    if (blobUrl) {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch {}
+      blobUrlCache.delete(token);
+    }
+    blobCache.delete(token);
+    const thumbUrl = thumbUrlCache.get(token);
+    if (thumbUrl) {
+      try {
+        URL.revokeObjectURL(thumbUrl);
+      } catch {}
+    }
+    thumbUrlCache.delete(token);
+    streamUrlCache.delete(token);
+    if (markGone) goneMediaTokens.add(token);
+    notifyMediaResolved(token);
+  }
+}
 
 const MAX_CONCURRENT_MEDIA = 6;
 let activeMediaLoads = 0;
@@ -61,7 +104,7 @@ function notifyMediaResolved(token: string): void {
   }
 }
 
-function subscribeMediaResolved(token: string, cb: () => void): () => void {
+export function subscribeMediaResolved(token: string, cb: () => void): () => void {
   let set = mediaResolvedListeners.get(token);
   if (!set) {
     set = new Set();
@@ -158,6 +201,9 @@ export async function fetchEncryptedMediaBlobUrl(
   opts?: { deviceId?: string; adminToken?: string; fileName?: string; mimeType?: string }
 ): Promise<string> {
   if (!token) throw new Error('Missing media token');
+  if (goneMediaTokens.has(token)) {
+    throw new MediaGoneError(410);
+  }
   if (blobUrlCache.has(token)) {
     return blobUrlCache.get(token)!;
   }
@@ -172,6 +218,10 @@ export async function fetchEncryptedMediaBlobUrl(
       headers,
       body: JSON.stringify({ token }),
     });
+    if (res.status === 410 || res.status === 404) {
+      goneMediaTokens.add(token);
+      throw new MediaGoneError(res.status);
+    }
     if (!res.ok) {
       throw new Error(`Failed to fetch encrypted media (${res.status})`);
     }
@@ -219,6 +269,9 @@ export async function fetchEncryptedThumbnailUrl(
   opts?: { deviceId?: string; adminToken?: string }
 ): Promise<string | null> {
   if (!token) throw new Error('Missing media token');
+  if (goneMediaTokens.has(token)) {
+    throw new MediaGoneError(410);
+  }
   if (thumbUrlCache.has(token)) {
     return thumbUrlCache.get(token) ?? null;
   }
@@ -237,6 +290,10 @@ export async function fetchEncryptedThumbnailUrl(
       thumbUrlCache.set(token, null);
       inFlightThumbs.delete(token);
       return null;
+    }
+    if (res.status === 410 || res.status === 404) {
+      goneMediaTokens.add(token);
+      throw new MediaGoneError(res.status);
     }
     if (!res.ok) {
       throw new Error(`Failed to fetch thumbnail (${res.status})`);
@@ -271,6 +328,9 @@ export async function fetchMediaStreamUrl(
   opts?: { deviceId?: string; adminToken?: string }
 ): Promise<string> {
   if (!token) throw new Error('Missing media token');
+  if (goneMediaTokens.has(token)) {
+    throw new MediaGoneError(410);
+  }
   const cached = streamUrlCache.get(token);
   if (cached && cached.exp > Date.now() + 30_000) {
     return cached.url;
@@ -282,6 +342,10 @@ export async function fetchMediaStreamUrl(
       headers: resolveAuthHeaders(opts),
       body: JSON.stringify({ token }),
     });
+    if (res.status === 410 || res.status === 404) {
+      goneMediaTokens.add(token);
+      throw new MediaGoneError(res.status);
+    }
     if (!res.ok) {
       throw new Error(`Failed to create stream ticket (${res.status})`);
     }
@@ -378,16 +442,25 @@ export function SecureImage({
   const { ref, inView } = useInViewport('280px');
   const cachedUrl = (thumbnail ? thumbUrlCache.get(token) : null) || blobUrlCache.get(token) || null;
   const [blobUrl, setBlobUrl] = useState<string | null>(cachedUrl);
+  const [gone, setGone] = useState<boolean>(() => goneMediaTokens.has(token));
   const [error, setError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
-  const effectiveUrl = cachedUrl || blobUrl;
+  const isGone = gone || goneMediaTokens.has(token);
+  const effectiveUrl = isGone ? null : cachedUrl || blobUrl;
 
   useEffect(() => {
     if (!token) return;
     return subscribeMediaResolved(token, () => {
+      if (goneMediaTokens.has(token)) {
+        setGone(true);
+        setBlobUrl(null);
+        setError(false);
+        return;
+      }
       const next = (thumbnail ? thumbUrlCache.get(token) : null) || blobUrlCache.get(token) || null;
       if (next) {
         setBlobUrl(next);
+        setGone(false);
         setError(false);
       }
     });
@@ -395,7 +468,7 @@ export function SecureImage({
 
   useEffect(() => {
     let mounted = true;
-    if (!token || cachedUrl || !inView) return;
+    if (!token || cachedUrl || !inView || isGone) return;
 
     const loadPromise = thumbnail
       ? fetchEncryptedThumbnailUrl(token).then((u) => u || fetchEncryptedMediaBlobUrl(token, { fileName: fileName || alt }))
@@ -405,16 +478,37 @@ export function SecureImage({
       .then((url) => {
         if (mounted) {
           setBlobUrl(url);
+          setGone(false);
           setError(false);
         }
       })
-      .catch(() => {
-        if (mounted) setError(true);
+      .catch((err) => {
+        if (!mounted) return;
+        if (isMediaGoneError(err)) {
+          setGone(true);
+          setError(false);
+        } else {
+          setError(true);
+        }
       });
     return () => {
       mounted = false;
     };
-  }, [token, cachedUrl, fileName, alt, thumbnail, inView, retryTick]);
+  }, [token, cachedUrl, fileName, alt, thumbnail, inView, isGone, retryTick]);
+
+  if (isGone) {
+    return (
+      <div
+        ref={ref}
+        data-testid="media-deleted-placeholder"
+        className={`flex flex-col items-center justify-center bg-slate-100 text-slate-500 text-xs gap-1.5 p-3 rounded-xl text-center select-none min-h-[110px] ${className || ''}`}
+        style={style}
+      >
+        <ImageOff size={20} className="opacity-65 shrink-0" />
+        <span className="font-medium leading-tight">รูปภาพนี้ถูกลบแล้ว</span>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -491,26 +585,37 @@ export function SecureVideo({
   const [thumbUrl, setThumbUrl] = useState<string | null>(cachedThumb ?? null);
   const [thumbLoaded, setThumbLoaded] = useState<boolean>(hasCachedThumb);
   const [srcUrl, setSrcUrl] = useState<string | null>(cachedStream);
+  const [gone, setGone] = useState<boolean>(() => goneMediaTokens.has(token));
   const [error, setError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
 
-  const effectiveThumb = cachedThumb !== undefined ? cachedThumb : thumbUrl;
-  const effectiveThumbLoaded = hasCachedThumb || thumbLoaded;
-  const effectiveSrcUrl = cachedStream || srcUrl;
+  const isGone = gone || goneMediaTokens.has(token);
+  const effectiveThumb = isGone ? null : cachedThumb !== undefined ? cachedThumb : thumbUrl;
+  const effectiveThumbLoaded = !isGone && (hasCachedThumb || thumbLoaded);
+  const effectiveSrcUrl = isGone ? null : cachedStream || srcUrl;
 
   useEffect(() => {
     if (!token) return;
     return subscribeMediaResolved(token, () => {
+      if (goneMediaTokens.has(token)) {
+        setGone(true);
+        setThumbUrl(null);
+        setSrcUrl(null);
+        setError(false);
+        return;
+      }
       if (isPosterMode) {
         if (thumbUrlCache.has(token)) {
           setThumbUrl(thumbUrlCache.get(token) ?? null);
           setThumbLoaded(true);
+          setGone(false);
           setError(false);
         }
       } else {
         const nextStream = streamUrlCache.get(token)?.url;
         if (nextStream) {
           setSrcUrl(nextStream);
+          setGone(false);
           setError(false);
         }
       }
@@ -519,7 +624,7 @@ export function SecureVideo({
 
   useEffect(() => {
     let mounted = true;
-    if (!token) return;
+    if (!token || isGone) return;
 
     if (isPosterMode) {
       if (hasCachedThumb || !inView) return;
@@ -528,29 +633,57 @@ export function SecureVideo({
           if (mounted) {
             setThumbUrl(url);
             setThumbLoaded(true);
+            setGone(false);
             setError(false);
           }
         })
-        .catch(() => {
-          if (mounted) setError(true);
+        .catch((err) => {
+          if (!mounted) return;
+          if (isMediaGoneError(err)) {
+            setGone(true);
+            setError(false);
+          } else {
+            setError(true);
+          }
         });
     } else {
       fetchMediaStreamUrl(token)
         .then((url) => {
           if (mounted) {
             setSrcUrl(url);
+            setGone(false);
             setError(false);
           }
         })
-        .catch(() => {
-          if (mounted) setError(true);
+        .catch((err) => {
+          if (!mounted) return;
+          if (isMediaGoneError(err)) {
+            setGone(true);
+            setError(false);
+          } else {
+            setError(true);
+          }
         });
     }
 
     return () => {
       mounted = false;
     };
-  }, [token, isPosterMode, hasCachedThumb, inView, retryTick]);
+  }, [token, isPosterMode, hasCachedThumb, inView, isGone, retryTick]);
+
+  if (isGone) {
+    return (
+      <div
+        ref={ref}
+        data-testid="media-deleted-placeholder"
+        className={`flex flex-col items-center justify-center bg-slate-800/90 text-slate-300 text-xs gap-1.5 p-3 rounded-xl text-center select-none min-h-[110px] ${className || ''}`}
+        style={style}
+      >
+        <VideoOff size={20} className="opacity-70 shrink-0" />
+        <span className="font-medium leading-tight">วิดีโอนี้ถูกลบแล้ว</span>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -650,22 +783,49 @@ export function SecureAudio({
   style?: React.CSSProperties;
 }) {
   const [srcUrl, setSrcUrl] = useState<string | null>(() => streamUrlCache.get(token)?.url || blobUrlCache.get(token) || null);
+  const [gone, setGone] = useState<boolean>(() => goneMediaTokens.has(token));
   const [error, setError] = useState(false);
+  const isGone = gone || goneMediaTokens.has(token);
+
+  useEffect(() => {
+    if (!token) return;
+    return subscribeMediaResolved(token, () => {
+      if (goneMediaTokens.has(token)) {
+        setGone(true);
+        setSrcUrl(null);
+        setError(false);
+      }
+    });
+  }, [token]);
 
   useEffect(() => {
     let mounted = true;
-    if (!token) return;
+    if (!token || isGone) return;
     fetchMediaStreamUrl(token)
       .then((url) => {
         if (mounted) setSrcUrl(url);
       })
-      .catch(() => {
-        if (mounted) setError(true);
+      .catch((err) => {
+        if (!mounted) return;
+        if (isMediaGoneError(err)) {
+          setGone(true);
+          setError(false);
+        } else {
+          setError(true);
+        }
       });
     return () => {
       mounted = false;
     };
-  }, [token]);
+  }, [token, isGone]);
+
+  if (isGone) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs opacity-75 px-2 py-1" data-testid="media-deleted-placeholder">
+        <AlertCircle size={14} /> ไฟล์เสียงนี้ถูกลบแล้ว
+      </div>
+    );
+  }
 
   if (error) {
     return (

@@ -2,8 +2,8 @@
 
 import React from "react";
 import {
-  Bell, Check, CheckCheck, Download, Edit2, Eye, File as FileIcon,
-  History, Play, Shield, Trash2
+  Bell, Check, CheckCheck, Download, Edit2, Eye, File as FileIcon, FileX,
+  History, ImageOff, Play, Shield, Trash2, VideoOff
 } from "lucide-react";
 import type { ChatAttachment, ChatMessage, SystemSettings } from "@/types/chat";
 import type { PreviewableFile } from "@/lib/filePreviewer";
@@ -304,7 +304,10 @@ export function ChatMessageList({
                   }}
                 >
                   {/* Multi-Media Album Grid */}
-                  {mediaItems.length > 0 && (
+                  {mediaItems.length > 0 && (() => {
+                    const activeMediaItems = mediaItems.filter((m) => !m.isDeleted);
+                    const deletedMediaCount = mediaItems.length - activeMediaItems.length;
+                    return (
                     <div className="p-1.5" style={{ width: mediaItems.length === 1 ? '290px' : '320px', maxWidth: '100%' }}>
                       <div
                         className={`grid gap-1.5 overflow-hidden rounded-xl ${
@@ -313,24 +316,55 @@ export function ChatMessageList({
                       >
                         {mediaItems.slice(0, 4).map((item, idx) => {
                           const isVid = isVideoAttachment(item);
+                          const isItemDeleted = Boolean(item.isDeleted);
                           const isThreeFirst = mediaItems.length === 3 && idx === 0;
                           const extraCount = mediaItems.length - 4;
                           const showOverlay = idx === 3 && extraCount > 0;
+                          const activeIdx = isItemDeleted
+                            ? -1
+                            : activeMediaItems.findIndex((a) => a === item || (a.mediaToken && a.mediaToken === item.mediaToken));
 
                           return (
                             <div
                               key={idx}
-                              data-testid={isVid ? `chat-video-tile-${msg.id}-${idx}` : `chat-image-tile-${msg.id}-${idx}`}
-                              onClick={() =>
-                                showOverlay
-                                  ? onOpenAlbumModal(attachments, 'all')
-                                  : onOpenLightbox(mediaItems, idx)
+                              data-testid={
+                                isItemDeleted
+                                  ? `chat-media-deleted-tile-${msg.id}-${idx}`
+                                  : isVid
+                                    ? `chat-video-tile-${msg.id}-${idx}`
+                                    : `chat-image-tile-${msg.id}-${idx}`
                               }
-                              className={`relative overflow-hidden rounded-lg bg-black/10 cursor-pointer group/tile ${
+                              onClick={() => {
+                                if (showOverlay) {
+                                  onOpenAlbumModal(attachments, 'all');
+                                  return;
+                                }
+                                if (isItemDeleted || activeMediaItems.length === 0) return;
+                                onOpenLightbox(activeMediaItems, activeIdx >= 0 ? activeIdx : 0);
+                              }}
+                              className={`relative overflow-hidden rounded-lg bg-black/10 group/tile ${
+                                isItemDeleted && !showOverlay ? 'cursor-default' : 'cursor-pointer'
+                              } ${
                                 isThreeFirst ? 'col-span-2 aspect-[16/9]' : mediaItems.length === 1 ? '' : 'aspect-square'
                               }`}
                             >
-                              {!isVid ? (
+                              {isItemDeleted ? (
+                                <div
+                                  className={`w-full h-full flex flex-col items-center justify-center gap-1.5 p-3 text-center select-none ${
+                                    isDark ? 'bg-slate-800/80 text-slate-400' : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                  style={{ minHeight: mediaItems.length === 1 ? '140px' : '120px' }}
+                                >
+                                  {isVid ? (
+                                    <VideoOff size={22} className="opacity-70 shrink-0" />
+                                  ) : (
+                                    <ImageOff size={22} className="opacity-70 shrink-0" />
+                                  )}
+                                  <span className="text-[11px] font-medium leading-tight">
+                                    {isVid ? 'วิดีโอนี้ถูกลบแล้ว' : 'รูปภาพนี้ถูกลบแล้ว'}
+                                  </span>
+                                </div>
+                              ) : !isVid ? (
                                 <SecureImage
                                   token={item.mediaToken}
                                   thumbnail
@@ -374,24 +408,29 @@ export function ChatMessageList({
                           );
                         })}
                       </div>
-                      {mediaItems.length === 1 && mediaItems[0].fileName && (
+                      {mediaItems.length === 1 && mediaItems[0].fileName && !mediaItems[0].isDeleted && (
                         <TruncatedFileName fileName={mediaItems[0].fileName} className="px-1 py-0.5" />
                       )}
                       {mediaItems.length > 1 && (
-                        <div className="flex items-center justify-between px-1.5 pt-1 text-[11px] opacity-80">
-                          <span>อัลบั้มสื่อ ({mediaItems.length} รายการ)</span>
+                        <div className="flex items-center justify-between px-1.5 pt-1 text-[11px] opacity-80 gap-2">
+                          <span data-testid={`msg-album-summary-${msg.id}`} className="truncate">
+                            {deletedMediaCount > 0
+                              ? `อัลบั้มสื่อ (${activeMediaItems.length}/${mediaItems.length} รายการ · ถูกลบ ${deletedMediaCount})`
+                              : `อัลบั้มสื่อ (${mediaItems.length} รายการ)`}
+                          </span>
                           <button
                             type="button"
                             data-testid={`msg-album-view-all-${msg.id}`}
                             onClick={() => onOpenAlbumModal(attachments, 'all')}
-                            className="underline hover:opacity-100 font-semibold cursor-pointer"
+                            className="underline hover:opacity-100 font-semibold cursor-pointer shrink-0"
                           >
                             ดูทั้งหมด
                           </button>
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Voice & Audio Cards */}
                   {audioItems.length > 0 && (
@@ -413,6 +452,23 @@ export function ChatMessageList({
                       }}
                     >
                       {docItems.slice(0, 2).map((doc, idx) => {
+                        if (doc.isDeleted) {
+                          return (
+                            <div
+                              key={idx}
+                              data-testid={`chat-doc-deleted-${msg.id}-${idx}`}
+                              className="flex items-center gap-2.5 rounded-xl bg-black/10 p-2.5 opacity-75 select-none"
+                            >
+                              <div className="p-2 rounded-lg bg-white/15 shrink-0">
+                                <FileX size={18} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold truncate line-through opacity-80">{doc.fileName}</p>
+                                <p className="text-[11px] opacity-75">ไฟล์นี้ถูกลบแล้ว</p>
+                              </div>
+                            </div>
+                          );
+                        }
                         const previewable = isRichPreviewSupported(doc.fileName, doc.mimeType);
                         return (
                           <div

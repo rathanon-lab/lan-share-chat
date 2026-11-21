@@ -116,7 +116,7 @@ export function streamMediaPayload(req: IncomingMessage, res: ServerResponse, pa
   const safeStoredName = path.basename(payload.f);
   const filePath = resolveMediaFilePath(safeStoredName);
   if (!filePath) {
-    return jsonErr(res, 404, 'Media file not found');
+    return jsonErr(res, 410, 'Media file has been deleted');
   }
 
   const ext = path.extname(filePath).toLowerCase();
@@ -180,7 +180,7 @@ export async function handleEncryptedMediaThumb(req: IncomingMessage, res: Serve
   const safeStoredName = path.basename(payload.f);
   const filePath = resolveMediaFilePath(safeStoredName);
   if (!filePath) {
-    return jsonErr(res, 404, 'Media file not found');
+    return jsonErr(res, 410, 'Media file has been deleted');
   }
 
   const mime = String(payload.m || '').toLowerCase();
@@ -219,6 +219,10 @@ export async function handleCreateStreamTicket(req: IncomingMessage, res: Server
   if (!payload) {
     return jsonErr(res, 403, 'Invalid or tampered media token');
   }
+  const safeStoredName = path.basename(payload.f);
+  if (!resolveMediaFilePath(safeStoredName)) {
+    return jsonErr(res, 410, 'Media file has been deleted');
+  }
   const ticket = createStreamTicket(payload, 15 * 60 * 1000);
   return jsonOk(res, { ticket, streamUrl: `/api/media/stream?t=${encodeURIComponent(ticket)}` });
 }
@@ -236,7 +240,7 @@ export async function handleStreamGet(
   if (query.compat === '1') {
     const safeStoredName = path.basename(payload.f);
     const origPath = resolveMediaFilePath(safeStoredName);
-    if (!origPath) return jsonErr(res, 404, 'Media file not found');
+    if (!origPath) return jsonErr(res, 410, 'Media file has been deleted');
     const compatPath = await getOrCreateCompatPreviewVideo(origPath, safeStoredName);
     if (compatPath) {
       return streamFileWithRange(req, res, compatPath, 'video/mp4', payload.n || safeStoredName);

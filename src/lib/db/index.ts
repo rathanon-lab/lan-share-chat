@@ -34,6 +34,7 @@ export {
   getAllMessages,
   getMessageById,
   getMessageEdits,
+  markAttachmentsDeletedInMessages,
   markMessagesReadUpTo,
   recordMessageEdit,
   sanitizeMessageForClient,

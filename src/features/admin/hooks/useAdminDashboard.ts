@@ -19,6 +19,7 @@ import type { AdminUploadedFileItem } from "@/features/admin/components/AdminFil
 import type { AdminDeviceItem } from "@/features/admin/components/AdminDevicesTab";
 import type { AdminLogEntry } from "@/features/admin/components/AdminLogsTab";
 import { ADMIN_DEFAULT_AVATAR_URL, DEFAULT_ADMIN_RING_COLOR } from "@/lib/avatars";
+import { evictMediaCache } from "@/lib/secureMedia";
 
 export interface AdminConfirmState {
   title: string;
@@ -323,6 +324,34 @@ export function useAdminDashboard(token: string) {
       const idSet = new Set(ids);
       setMessages((prev) => prev.filter((m) => !idSet.has(m.id)));
     });
+    sock.on(
+      "message_attachments_updated",
+      ({
+        updates,
+      }: {
+        updates?: Array<{ id: number; attachments: ChatMessage["attachments"]; removedTokens?: string[] }>;
+      }) => {
+        if (!Array.isArray(updates) || updates.length === 0) return;
+        const allTokens: string[] = [];
+        const byId = new Map<number, ChatMessage["attachments"]>();
+        for (const u of updates) {
+          if (typeof u.id === "number" && Array.isArray(u.attachments)) {
+            byId.set(u.id, u.attachments);
+          }
+          if (Array.isArray(u.removedTokens)) {
+            for (const tok of u.removedTokens) {
+              if (tok) allTokens.push(tok);
+            }
+          }
+        }
+        if (allTokens.length > 0) evictMediaCache(allTokens, true);
+        if (byId.size > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (byId.has(m.id) ? { ...m, attachments: byId.get(m.id) } : m))
+          );
+        }
+      }
+    );
     sock.on("device_status_changed", ({ deviceId: targetId, status }: { deviceId: string; status: SenderDeviceStatus }) => {
       if (!targetId) return;
       setMessages((prev) =>

@@ -21,6 +21,7 @@ import {
   getRecentLogs,
   getSystemSettings,
   logActivity,
+  markAttachmentsDeletedInMessages,
   resetSystemSettings,
   sanitizeMessageForClient,
   saveMessage,
@@ -199,6 +200,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const deletedRows = await deleteUploadedFilesBatch(ids);
     unlinkStoredFiles(deletedRows);
     if (deletedRows.length > 0) {
+      const updatedMsgs = await markAttachmentsDeletedInMessages(deletedRows);
+      if (ioRef && updatedMsgs.length > 0) {
+        ioRef.emit('message_attachments_updated', { updates: updatedMsgs });
+      }
       await logActivity(
         'BATCH_DELETE_FILES',
         'admin',
@@ -219,6 +224,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const row = await deleteUploadedFile(id);
     if (row) {
       unlinkStoredFiles([row]);
+      const updatedMsgs = await markAttachmentsDeletedInMessages([{ id, storedName: row.storedName }]);
+      if (ioRef && updatedMsgs.length > 0) {
+        ioRef.emit('message_attachments_updated', { updates: updatedMsgs });
+      }
       await logActivity('DELETE_FILE', 'admin', clientIp, JSON.stringify({ id, originalName: row.originalName, storedName: row.storedName }));
     }
     return jsonOk(res, { success: true }), true;
@@ -310,6 +319,12 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     if (body.resetFiles) {
       const deleted = await deleteAllUploadedFiles();
       unlinkStoredFiles(deleted);
+      if (!body.resetMessages && deleted.length > 0) {
+        const updatedMsgs = await markAttachmentsDeletedInMessages(deleted);
+        if (ioRef && updatedMsgs.length > 0) {
+          ioRef.emit('message_attachments_updated', { updates: updatedMsgs });
+        }
+      }
       await logActivity('RESET_FILES', 'admin', clientIp, `Deleted ${deleted.length} uploaded files`);
     }
     if (body.resetDevices) {

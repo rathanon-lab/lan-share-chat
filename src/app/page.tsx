@@ -458,7 +458,14 @@ export default function ChatApp() {
 
         {albumModal && (
           <AlbumGalleryModal
-            items={albumModal.items}
+            items={albumModal.items.map((item) => {
+              if (item.isDeleted || !item.mediaToken) return item;
+              for (const m of chat.messages) {
+                const match = m.attachments?.find((a) => a.mediaToken === item.mediaToken);
+                if (match?.isDeleted) return match;
+              }
+              return item;
+            })}
             initialFilter={albumModal.initialFilter}
             onClose={() => setAlbumModal(null)}
             onOpenLightbox={(visualItems, index) => setLightbox({ items: visualItems, index })}

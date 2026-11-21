@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Download, Music, Volume2 } from 'lucide-react';
+import { Download, FileX, Music, Volume2 } from 'lucide-react';
 import type { ChatAttachment } from '@/types/chat';
 import { formatBytes } from '@/features/chat/lib/formatters';
 import { extractAudioMetadata, type AudioMetadata } from '@/lib/audioMetadata';
@@ -12,14 +12,31 @@ export function AudioAttachmentCard({ aud }: { aud: ChatAttachment }) {
 
   useEffect(() => {
     let mounted = true;
-    if (!aud.mediaToken) return;
+    if (!aud.mediaToken || aud.isDeleted) return;
     extractAudioMetadata(aud.mediaToken).then((res) => {
       if (mounted && res) setMeta(res);
     });
     return () => {
       mounted = false;
     };
-  }, [aud.mediaToken]);
+  }, [aud.mediaToken, aud.isDeleted]);
+
+  if (aud.isDeleted) {
+    return (
+      <div
+        data-testid="audio-attachment-deleted"
+        className="rounded-xl bg-black/10 p-2.5 flex items-center gap-2.5 opacity-75 select-none"
+      >
+        <div className="w-9 h-9 rounded-lg bg-black/15 flex items-center justify-center shrink-0">
+          <FileX size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold truncate line-through opacity-80">{aud.fileName}</div>
+          <div className="text-[11px] opacity-75">ไฟล์เสียงนี้ถูกลบแล้ว</div>
+        </div>
+      </div>
+    );
+  }
 
   const displayTitle = meta?.title || aud.fileName;
   const subParts = [meta?.artist, meta?.album].filter(Boolean);

@@ -11,10 +11,17 @@ import {
   Repeat,
   RotateCcw,
   RotateCw,
+  VideoOff,
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { fetchMediaStreamUrl, getVideoTranscodeAvailable } from "@/lib/secureMedia";
+import {
+  fetchMediaStreamUrl,
+  getVideoTranscodeAvailable,
+  isMediaGoneError,
+  isMediaTokenGone,
+  subscribeMediaResolved,
+} from "@/lib/secureMedia";
 
 function formatMediaTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -40,19 +47,29 @@ export function CustomVideoPlayer({
 
   const [loadedStream, setLoadedStream] = useState<{ token: string; url: string } | null>(null);
   const [failedToken, setFailedToken] = useState<string | null>(null);
+  const [goneToken, setGoneToken] = useState<string | null>(null);
   const [compatUrlState, setCompatUrlState] = useState<{ token: string; url: string } | null>(null);
   const [compatTriedToken, setCompatTriedToken] = useState<string | null>(null);
   const [transcodingToken, setTranscodingToken] = useState<string | null>(null);
   const [audioOnlyToken, setAudioOnlyToken] = useState<string | null>(null);
   const [serverHasFfmpeg, setServerHasFfmpeg] = useState<boolean>(true);
+  const [rotationState, setRotationState] = useState<{ token: string; deg: 0 | 90 | 180 | 270 }>({ token, deg: 0 });
+  const [naturalSize, setNaturalSize] = useState<{ token: string; w: number; h: number }>({ token, w: 0, h: 0 });
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
-  const srcUrl =
-    compatUrlState?.token === token
+  const isGone = goneToken === token || isMediaTokenGone(token);
+  const rotation = rotationState.token === token ? rotationState.deg : 0;
+  const videoNatW = naturalSize.token === token ? naturalSize.w : 0;
+  const videoNatH = naturalSize.token === token ? naturalSize.h : 0;
+
+  const srcUrl = isGone
+    ? null
+    : compatUrlState?.token === token
       ? compatUrlState.url
       : loadedStream?.token === token
         ? loadedStream.url
         : null;
-  const loadError = failedToken === token;
+  const loadError = !isGone && failedToken === token;
   const compatTried = compatTriedToken === token;
   const isTranscodingCompat = transcodingToken === token;
   const audioOnlyCodecNotice = audioOnlyToken === token;
@@ -76,21 +93,60 @@ export function CustomVideoPlayer({
   }, [abLoop]);
 
   useEffect(() => {
+    if (!token) return;
+    return subscribeMediaResolved(token, () => {
+      if (isMediaTokenGone(token)) {
+        if (videoRef.current) {
+          try {
+            videoRef.current.pause();
+          } catch {}
+        }
+        setGoneToken(token);
+      }
+    });
+  }, [token]);
+
+  useEffect(() => {
     let mounted = true;
+    if (isMediaTokenGone(token)) return;
     fetchMediaStreamUrl(token)
       .then((url) => {
         if (mounted) {
           setLoadedStream({ token, url });
           setFailedToken((prev) => (prev === token ? null : prev));
+          setGoneToken((prev) => (prev === token ? null : prev));
         }
       })
-      .catch(() => {
-        if (mounted) setFailedToken(token);
+      .catch((err) => {
+        if (!mounted) return;
+        if (isMediaGoneError(err)) {
+          setGoneToken(token);
+          setFailedToken((prev) => (prev === token ? null : prev));
+        } else {
+          setFailedToken(token);
+        }
       });
     return () => {
       mounted = false;
     };
   }, [token]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setContainerSize((prev) =>
+        Math.abs(prev.w - rect.width) > 1 || Math.abs(prev.h - rect.height) > 1
+          ? { w: rect.width, h: rect.height }
+          : prev
+      );
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [srcUrl, isFullscreen, rotation]);
 
   const scheduleHideControls = useCallback(() => {
     if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
@@ -204,6 +260,16 @@ export function CustomVideoPlayer({
     revealControls();
   }, [playbackRate, flashHud, revealControls]);
 
+  const rotateVideo = useCallback(() => {
+    setRotationState((prev) => {
+      const cur = prev.token === token ? prev.deg : 0;
+      const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
+      flashHud(next === 0 ? "มุมปกติ 0°" : `หมุน ${next}°`);
+      return { token, deg: next };
+    });
+    revealControls();
+  }, [token, flashHud, revealControls]);
+
   const toggleFullscreen = useCallback(async () => {
     const el = containerRef.current;
     const vid = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
@@ -273,11 +339,14 @@ export function CustomVideoPlayer({
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         toggleFullscreen();
+      } else if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        rotateVideo();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePlay, seekBy, toggleMute, toggleFullscreen]);
+  }, [togglePlay, seekBy, toggleMute, toggleFullscreen, rotateVideo]);
 
   const handleSideTap = (side: "left" | "right", e: React.MouseEvent) => {
     e.stopPropagation();
@@ -291,6 +360,18 @@ export function CustomVideoPlayer({
       scheduleHideControls();
     }
   };
+
+  if (isGone) {
+    return (
+      <div
+        data-testid="video-deleted-placeholder"
+        className="flex flex-col items-center justify-center bg-slate-900 text-slate-300 text-sm gap-2 p-10 rounded-2xl select-none"
+      >
+        <VideoOff size={28} className="opacity-75" />
+        <span className="font-medium">วิดีโอนี้ถูกลบแล้ว</span>
+      </div>
+    );
+  }
 
   if (loadError) {
     return (
@@ -310,15 +391,49 @@ export function CustomVideoPlayer({
 
   const abStartPct = duration > 0 && abLoop.a !== null ? Math.min(100, (abLoop.a / duration) * 100) : 0;
   const abEndPct = duration > 0 && abLoop.b !== null ? Math.min(100, (abLoop.b / duration) * 100) : abStartPct;
+  const isQuarterTurn = rotation === 90 || rotation === 270;
+
+  let videoTransformStyle: React.CSSProperties | undefined;
+  if (isQuarterTurn && containerSize.w > 0 && containerSize.h > 0 && videoNatW > 0 && videoNatH > 0) {
+    const cw = containerSize.w;
+    const ch = containerSize.h;
+    const ar = videoNatW / videoNatH;
+    let dispW: number;
+    let dispH: number;
+    if (cw / ch > ar) {
+      dispH = ch;
+      dispW = ch * ar;
+    } else {
+      dispW = cw;
+      dispH = cw / ar;
+    }
+    const rotScale = Math.min(cw / dispH, ch / dispW);
+    videoTransformStyle = {
+      width: `${dispW}px`,
+      height: `${dispH}px`,
+      transform: `rotate(${rotation}deg) scale(${rotScale})`,
+      transition: "transform 180ms ease-out",
+    };
+  } else if (rotation !== 0) {
+    videoTransformStyle = {
+      transform: `rotate(${rotation}deg)`,
+      transition: "transform 180ms ease-out",
+    };
+  }
 
   return (
     <div
       ref={containerRef}
       data-testid="custom-video-player"
+      data-rotation={rotation}
       onClick={(e) => e.stopPropagation()}
       onMouseMove={revealControls}
       className={`relative bg-black rounded-2xl overflow-hidden shadow-2xl select-none flex items-center justify-center group ${
-        isFullscreen ? "w-screen h-screen rounded-none" : "w-full max-w-4xl"
+        isFullscreen
+          ? "w-screen h-screen rounded-none"
+          : isQuarterTurn
+            ? "w-full max-w-4xl h-[65dvh] sm:h-[72vh]"
+            : "w-full max-w-4xl"
       } ${className}`}
     >
       <video
@@ -332,6 +447,9 @@ export function CustomVideoPlayer({
           const v = e.currentTarget;
           setDuration(Number.isFinite(v.duration) ? v.duration : 0);
           setIsLandscapeVideo(v.videoWidth > v.videoHeight);
+          if (v.videoWidth > 0 && v.videoHeight > 0) {
+            setNaturalSize({ token, w: v.videoWidth, h: v.videoHeight });
+          }
 
           if (v.videoWidth === 0 && v.videoHeight === 0) {
             if (!compatTried) {
@@ -390,8 +508,34 @@ export function CustomVideoPlayer({
           }
           setCurrentTime(t);
         }}
-        className={`w-full object-contain ${isFullscreen ? "h-full max-h-screen" : "max-h-[70dvh] sm:max-h-[75vh]"}`}
+        style={videoTransformStyle}
+        className={`object-contain ${
+          isQuarterTurn && videoTransformStyle
+            ? "shrink-0"
+            : isFullscreen
+              ? "w-full h-full max-h-screen"
+              : "w-full max-h-[70dvh] sm:max-h-[75vh]"
+        }`}
       />
+
+      {/* Top-Right Floating Rotate 90° Control (Auto-hides with Controls) */}
+      <button
+        type="button"
+        data-testid="video-rotate-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          rotateVideo();
+        }}
+        title="หมุนวิดีโอ 90° (ปุ่ม R)"
+        className={`absolute top-3 right-3 z-30 px-2.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-sm border transition-all duration-200 cursor-pointer ${
+          rotation !== 0
+            ? "bg-blue-600/90 hover:bg-blue-600 text-white border-blue-400/50"
+            : "bg-black/60 hover:bg-black/80 text-white border-white/15"
+        } ${controlsVisible || !isPlaying ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+      >
+        <RotateCw size={14} />
+        <span>{rotation !== 0 ? `${rotation}°` : "หมุน"}</span>
+      </button>
 
       {/* Interactive Tap Zones: Left (Double-tap -10s), Center (Tap Play/Pause), Right (Double-tap +10s) */}
       <div className="absolute inset-0 z-10 grid grid-cols-[28%_44%_28%]">

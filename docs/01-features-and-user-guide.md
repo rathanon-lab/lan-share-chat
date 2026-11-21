@@ -7,6 +7,7 @@ Comprehensive guide to all user and administrator workflows in **LAN Share Chat 
 > - **Cross-Platform `<= 112`-Char Filename Guard:** Validates filenames across sender UI (chat, admin, P2P), HTTP chunk upload, WebRTC signaling (`INVALID_FILENAME`), and client downloads to prevent Windows/Linux/Android/iPad path failures.
 > - **Mobile Root Back-Guard & History Replace:** Cleanly unwinds modals/lightbox/Peers sub-tab on hardware Back, prevents `/admin` history bounce via `<Link href="/" replace>`, and surfaces a clear top-level root notice.
 > - **Traffic Telemetry & Per-Zone Storage Quotas:** Tracks `uploadBytes`, `egressBytes`, and per-file upload counts alongside per-zone quota bars and automatic LRU cache eviction.
+> - **Real-Time Deleted Media Sync (`HTTP 410 Gone`) & 90° Video/Image Rotation:** Deleting files immediately patches active chat albums/modals with neutral removed-media placeholders (skipping deleted items in Lightbox & ZIP downloads), while both `CustomVideoPlayer` and Image Viewers support `0°/90°/180°/270°` fit-to-box rotation (`R` shortcut).
 
 ---
 
@@ -71,10 +72,10 @@ Comprehensive guide to all user and administrator workflows in **LAN Share Chat 
 
 | Format | Client Engine | Notes |
 | :--- | :--- | :--- |
-| **Images** (`.jpg`, `.png`, `.webp`, `.gif`, `.bmp`) | AES-256-GCM Blob + `LightboxModal` (`ZoomableMediaStage`) | Album grid + pinch/pan/wheel zoom & floating zoom rail |
+| **Images** (`.jpg`, `.png`, `.webp`, `.gif`, `.bmp`) | AES-256-GCM Blob + `LightboxModal` (`ZoomableMediaStage`) | Album grid + pinch/pan/wheel zoom, floating zoom rail & `90°` rotation (`R`) |
 | **Sent Stickers & Collages** | `StickerZoomModal` (`ZoomableMediaStage` + `StickerVisual`) | Full-screen pinch/pan/wheel zoom (view-only; no download button) |
 | **Apple Photos** (`.heic`, `.heif`) | `heic2any` | Converted cleanly to JPEG/PNG in browser |
-| **Videos / Audio** (`.mp4`, `.mov`, `.m4v`, `.webm`, `.mp3`, `.wav`, `.m4a`) | Expiring Stream Ticket (`HTTP 206`) + Optional FFmpeg H.264 Cache | Smooth byte-range seeking on iOS/iPadOS Safari & custom video player |
+| **Videos / Audio** (`.mp4`, `.mov`, `.m4v`, `.webm`, `.mp3`, `.wav`, `.m4a`) | Expiring Stream Ticket (`HTTP 206`) + Optional FFmpeg H.264 Cache | Smooth byte-range seeking on iOS/iPadOS Safari, custom video player & fit-to-box `90°` rotation (`R`) |
 | **PDF** (`.pdf`) | `pdfjs-dist` `<canvas>` | Multi-page canvas rendering with zoom controls on iOS Safari & desktop |
 | **Markdown** (`.md`) | `react-markdown` + `remark-gfm` + `rehype-sanitize` | Rendered safely with GFM tables and code blocks |
 | **Word Documents** (`.docx`) | `mammoth` + `dompurify` | Sanitized HTML document preview |

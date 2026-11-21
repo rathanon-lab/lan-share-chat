@@ -2,8 +2,8 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  Check, CheckSquare, Download, Eye, File as FileIcon, FileArchive,
-  Loader2, Music, Package, Play, Square, X
+  Check, CheckSquare, Download, Eye, File as FileIcon, FileArchive, FileX,
+  ImageOff, Loader2, Music, Package, Play, Square, VideoOff, X
 } from 'lucide-react';
 import type { ChatAttachment } from '@/types/chat';
 import {
@@ -50,7 +50,10 @@ export function AlbumGalleryModal({
     () => items.map((item, idx) => ({ item, idx })).filter((e) => !isVisualMediaAttachment(e.item)),
     [items]
   );
-  const visualItemsOnly = useMemo(() => visualEntries.map((e) => e.item), [visualEntries]);
+  const visualItemsOnly = useMemo(
+    () => visualEntries.filter((e) => !e.item.isDeleted).map((e) => e.item),
+    [visualEntries]
+  );
 
   const hasMixedCategories = visualEntries.length > 0 && fileEntries.length > 0;
   const visibleEntries = useMemo(() => {
@@ -59,13 +62,19 @@ export function AlbumGalleryModal({
     return items.map((item, idx) => ({ item, idx }));
   }, [filter, visualEntries, fileEntries, items]);
 
-  const selectedVisible = useMemo(
-    () => visibleEntries.filter((e) => selectedIndices.has(e.idx)),
-    [visibleEntries, selectedIndices]
+  const activeVisibleEntries = useMemo(
+    () => visibleEntries.filter((e) => !e.item.isDeleted),
+    [visibleEntries]
   );
-  const targetEntries = selectedVisible.length > 0 ? selectedVisible : visibleEntries;
+  const deletedVisibleCount = visibleEntries.length - activeVisibleEntries.length;
+
+  const selectedVisible = useMemo(
+    () => activeVisibleEntries.filter((e) => selectedIndices.has(e.idx)),
+    [activeVisibleEntries, selectedIndices]
+  );
+  const targetEntries = selectedVisible.length > 0 ? selectedVisible : activeVisibleEntries;
   const allVisibleSelected =
-    visibleEntries.length > 0 && selectedVisible.length === visibleEntries.length;
+    activeVisibleEntries.length > 0 && selectedVisible.length === activeVisibleEntries.length;
 
   const toggleIndex = (idx: number) => {
     setSelectedIndices((prev) => {
@@ -80,9 +89,9 @@ export function AlbumGalleryModal({
     setSelectedIndices((prev) => {
       const next = new Set(prev);
       if (allVisibleSelected) {
-        visibleEntries.forEach((e) => next.delete(e.idx));
+        activeVisibleEntries.forEach((e) => next.delete(e.idx));
       } else {
-        visibleEntries.forEach((e) => next.add(e.idx));
+        activeVisibleEntries.forEach((e) => next.add(e.idx));
       }
       return next;
     });
@@ -123,6 +132,7 @@ export function AlbumGalleryModal({
   };
 
   const handleCardPrimaryAction = (item: ChatAttachment) => {
+    if (item.isDeleted) return;
     if (isVisualMediaAttachment(item)) {
       const vIdx = visualItemsOnly.findIndex((v) => v.mediaToken === item.mediaToken && v.fileName === item.fileName);
       onOpenLightbox(visualItemsOnly, vIdx >= 0 ? vIdx : 0);
@@ -160,8 +170,10 @@ export function AlbumGalleryModal({
             </h3>
             <p className="text-[11px] text-gray-500 mt-0.5 truncate">
               {selectedVisible.length > 0
-                ? `เลือกแล้ว ${selectedVisible.length}/${visibleEntries.length} (${formatBytes(totalBytes)})`
-                : `แสดง ${visibleEntries.length} รายการ (${formatBytes(totalBytes)})`}
+                ? `เลือกแล้ว ${selectedVisible.length}/${activeVisibleEntries.length} (${formatBytes(totalBytes)})`
+                : deletedVisibleCount > 0
+                  ? `พร้อมใช้งาน ${activeVisibleEntries.length}/${visibleEntries.length} รายการ · ถูกลบ ${deletedVisibleCount} (${formatBytes(totalBytes)})`
+                  : `แสดง ${visibleEntries.length} รายการ (${formatBytes(totalBytes)})`}
             </p>
           </div>
           <button
@@ -269,58 +281,84 @@ export function AlbumGalleryModal({
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 bg-gray-100/70">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {visibleEntries.map(({ item, idx }) => {
-              const isChecked = selectedIndices.has(idx);
+              const isItemDeleted = Boolean(item.isDeleted);
+              const isChecked = !isItemDeleted && selectedIndices.has(idx);
               const isVisual = isVisualMediaAttachment(item);
               const isVid = isVideoAttachment(item);
               const isAud = isAudioAttachment(item);
               const previewKind = getFilePreviewKind(item.fileName, item.mimeType);
-              const canPreview = isVisual || isRichPreviewSupported(item.fileName, item.mimeType);
+              const canPreview = !isItemDeleted && (isVisual || isRichPreviewSupported(item.fileName, item.mimeType));
 
               return (
                 <div
                   key={`${idx}-${item.mediaToken}`}
-                  data-testid={`album-card-${idx}`}
+                  data-testid={isItemDeleted ? `album-card-deleted-${idx}` : `album-card-${idx}`}
                   className={`relative rounded-xl bg-white border transition-all overflow-hidden flex flex-col shadow-sm ${
-                    isChecked ? 'border-blue-600 ring-2 ring-blue-500/30' : 'border-gray-200 hover:border-gray-300'
+                    isItemDeleted
+                      ? 'border-gray-200 opacity-75'
+                      : isChecked
+                        ? 'border-blue-600 ring-2 ring-blue-500/30'
+                        : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
                   {/* Top-left selection checkbox */}
-                  <button
-                    type="button"
-                    data-testid={`album-item-checkbox-${idx}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleIndex(idx);
-                    }}
-                    className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md border flex items-center justify-center transition-colors cursor-pointer shadow ${
-                      isChecked
-                        ? 'bg-blue-600 border-blue-600 text-white'
-                        : 'bg-white/90 border-gray-300 text-transparent hover:border-blue-500'
-                    }`}
-                    aria-label={`เลือก ${item.fileName}`}
-                  >
-                    <Check size={14} strokeWidth={3} />
-                  </button>
+                  {!isItemDeleted && (
+                    <button
+                      type="button"
+                      data-testid={`album-item-checkbox-${idx}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleIndex(idx);
+                      }}
+                      className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md border flex items-center justify-center transition-colors cursor-pointer shadow ${
+                        isChecked
+                          ? 'bg-blue-600 border-blue-600 text-white'
+                          : 'bg-white/90 border-gray-300 text-transparent hover:border-blue-500'
+                      }`}
+                      aria-label={`เลือก ${item.fileName}`}
+                    >
+                      <Check size={14} strokeWidth={3} />
+                    </button>
+                  )}
 
                   {/* Top-right single download button */}
-                  <button
-                    type="button"
-                    data-testid={`album-item-download-${idx}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadEncryptedMedia(item.mediaToken, item.fileName);
-                    }}
-                    className="absolute top-2 right-2 z-10 w-7 h-7 rounded-lg bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer shadow"
-                    title="ดาวน์โหลดไฟล์นี้"
-                  >
-                    <Download size={13} />
-                  </button>
+                  {!isItemDeleted && (
+                    <button
+                      type="button"
+                      data-testid={`album-item-download-${idx}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadEncryptedMedia(item.mediaToken, item.fileName);
+                      }}
+                      className="absolute top-2 right-2 z-10 w-7 h-7 rounded-lg bg-black/55 hover:bg-black/75 text-white flex items-center justify-center cursor-pointer shadow"
+                      title="ดาวน์โหลดไฟล์นี้"
+                    >
+                      <Download size={13} />
+                    </button>
+                  )}
 
                   {/* Thumbnail / Icon Area */}
                   <div
                     onClick={() => handleCardPrimaryAction(item)}
-                    className="relative aspect-square w-full bg-gray-900/5 flex items-center justify-center overflow-hidden cursor-pointer group"
+                    className={`relative aspect-square w-full bg-gray-900/5 flex items-center justify-center overflow-hidden group ${
+                      isItemDeleted ? 'cursor-default' : 'cursor-pointer'
+                    }`}
                   >
+                    {isItemDeleted ? (
+                      <div className="flex flex-col items-center justify-center gap-1.5 p-3 text-center text-slate-500 bg-slate-100 w-full h-full select-none">
+                        {isVid ? (
+                          <VideoOff size={24} className="opacity-70" />
+                        ) : isVisual ? (
+                          <ImageOff size={24} className="opacity-70" />
+                        ) : (
+                          <FileX size={24} className="opacity-70" />
+                        )}
+                        <span className="text-[11px] font-medium leading-tight">
+                          {isVid ? 'วิดีโอนี้ถูกลบแล้ว' : isVisual ? 'รูปภาพนี้ถูกลบแล้ว' : 'ไฟล์นี้ถูกลบแล้ว'}
+                        </span>
+                      </div>
+                    ) : (
+                      <>
                     {isVisual && !isVid && (
                       <SecureImage
                         token={item.mediaToken}
@@ -378,15 +416,20 @@ export function AlbumGalleryModal({
                         </span>
                       </div>
                     )}
+                      </>
+                    )}
                   </div>
 
                   {/* Footer Metadata */}
                   <div className="p-2 bg-white border-t border-gray-100 min-w-0">
-                    <div className="text-xs font-semibold text-gray-800 truncate" title={item.fileName}>
+                    <div
+                      className={`text-xs font-semibold truncate ${isItemDeleted ? 'text-gray-400 line-through' : 'text-gray-800'}`}
+                      title={item.fileName}
+                    >
                       {item.fileName}
                     </div>
                     <div className="text-[10px] text-gray-500 mt-0.5 flex items-center justify-between">
-                      <span>{formatBytes(item.fileSize)}</span>
+                      <span>{isItemDeleted ? 'ถูกลบแล้ว' : formatBytes(item.fileSize)}</span>
                       <span className="text-gray-400">#{idx + 1}</span>
                     </div>
                   </div>

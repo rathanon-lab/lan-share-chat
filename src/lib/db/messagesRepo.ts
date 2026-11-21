@@ -1,5 +1,5 @@
 import path from 'path';
-import { encryptMediaToken } from '../crypto';
+import { decryptMediaToken, encryptMediaToken } from '../crypto';
 import { resolveFallbackAvatarForName } from '../avatars';
 import { dbAll, dbGet, dbRun } from './client';
 import { getSystemSettings } from './settingsRepo';
@@ -343,6 +343,118 @@ export async function deleteAllMessages(): Promise<void> {
   await dbRun('DELETE FROM message_edits');
   await dbRun('DELETE FROM admin_alerts');
   await dbRun('DELETE FROM messages');
+}
+
+export async function markAttachmentsDeletedInMessages(
+  deletedFiles: Array<{ id?: number; storedName: string }>
+): Promise<Array<{ id: number; attachments: Record<string, unknown>[]; removedTokens: string[] }>> {
+  if (!Array.isArray(deletedFiles) || deletedFiles.length === 0) return [];
+
+  const deletedIds = new Set<number>();
+  const deletedStoredNames = new Set<string>();
+  for (const f of deletedFiles) {
+    if (typeof f.id === 'number' && Number.isInteger(f.id) && f.id > 0) {
+      deletedIds.add(f.id);
+    }
+    if (f.storedName) {
+      deletedStoredNames.add(path.basename(String(f.storedName)));
+    }
+  }
+  if (deletedIds.size === 0 && deletedStoredNames.size === 0) return [];
+
+  const rows = await dbAll<MessageRowRecord>(
+    `SELECT id, attachments, mediaToken, filePath, fileName, fileSize, mimeType
+     FROM messages
+     WHERE COALESCE(isDeleted, 0) = 0
+       AND (attachments IS NOT NULL OR mediaToken IS NOT NULL OR filePath IS NOT NULL)`
+  );
+
+  const now = Date.now();
+  const updates: Array<{ id: number; attachments: Record<string, unknown>[]; removedTokens: string[] }> = [];
+
+  for (const row of rows) {
+    const msgId = Number(row.id);
+    if (!Number.isInteger(msgId) || msgId <= 0) continue;
+
+    let parsedAttachments: Record<string, unknown>[] = [];
+    if (row.attachments) {
+      try {
+        const parsed =
+          typeof row.attachments === 'string' ? JSON.parse(row.attachments) : row.attachments;
+        if (Array.isArray(parsed)) {
+          parsedAttachments = parsed.map((item) => ({ ...(item as Record<string, unknown>) }));
+        }
+      } catch {
+        parsedAttachments = [];
+      }
+    }
+
+    if (parsedAttachments.length === 0 && (row.mediaToken || row.filePath)) {
+      let token = typeof row.mediaToken === 'string' ? row.mediaToken : '';
+      if (!token && row.filePath) {
+        const storedName = path.basename(String(row.filePath));
+        token = encryptMediaToken({
+          storedName,
+          originalName: String(row.fileName || storedName),
+          mimeType: String(row.mimeType || 'application/octet-stream'),
+        });
+      }
+      if (token) {
+        parsedAttachments = [
+          {
+            fileName: row.fileName || 'attachment',
+            fileSize: Number(row.fileSize) || 0,
+            mimeType: row.mimeType || 'application/octet-stream',
+            mediaToken: token,
+          },
+        ];
+      }
+    }
+
+    if (parsedAttachments.length === 0) continue;
+
+    let changed = false;
+    const removedTokens: string[] = [];
+
+    for (const att of parsedAttachments) {
+      if (att.isDeleted) continue;
+
+      let matched = false;
+      const attFileId = Number(att.fileId);
+      if (Number.isInteger(attFileId) && attFileId > 0 && deletedIds.has(attFileId)) {
+        matched = true;
+      }
+
+      const token = typeof att.mediaToken === 'string' ? att.mediaToken : '';
+      if (!matched && token && deletedStoredNames.size > 0) {
+        const payload = decryptMediaToken(token);
+        if (payload?.f && deletedStoredNames.has(path.basename(payload.f))) {
+          matched = true;
+        }
+      }
+
+      if (!matched && row.filePath && deletedStoredNames.has(path.basename(String(row.filePath)))) {
+        matched = true;
+      }
+
+      if (matched) {
+        att.isDeleted = true;
+        att.deletedAt = now;
+        if (token) removedTokens.push(token);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await dbRun('UPDATE messages SET attachments = ? WHERE id = ?', [
+        JSON.stringify(parsedAttachments),
+        msgId,
+      ]);
+      updates.push({ id: msgId, attachments: parsedAttachments, removedTokens });
+    }
+  }
+
+  return updates;
 }
 
 export async function markMessagesReadUpTo(

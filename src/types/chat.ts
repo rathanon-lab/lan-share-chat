@@ -19,6 +19,8 @@ export interface ChatAttachment {
   fileSize: number;
   mimeType: string;
   mediaToken: string;
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
 
 export type StickerPreviewMode = 'fullscreen_modal' | 'docked_tray';

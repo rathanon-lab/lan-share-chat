@@ -5,6 +5,7 @@ import React, { useCallback, useRef, useState } from "react";
 interface ZoomableMediaStageProps {
   zoom: number;
   onZoomChange: (next: number) => void;
+  rotation?: number;
   minZoom?: number;
   maxZoom?: number;
   onBackgroundClick?: () => void;
@@ -23,6 +24,7 @@ function pointerDist(pts: Map<number, { x: number; y: number }>): number {
 export function ZoomableMediaStage({
   zoom,
   onZoomChange,
+  rotation = 0,
   minZoom = 0.6,
   maxZoom = 3.0,
   onBackgroundClick,
@@ -156,9 +158,10 @@ export function ZoomableMediaStage({
     >
       <div
         data-testid={contentTestId}
+        data-rotation={rotation}
         style={{
-          transform: `translate3d(${effectivePan.x}px, ${effectivePan.y}px, 0) scale(${zoom})`,
-          transition: isInteracting ? "none" : "transform 130ms ease-out",
+          transform: `translate3d(${effectivePan.x}px, ${effectivePan.y}px, 0) scale(${zoom}) rotate(${rotation}deg)`,
+          transition: isInteracting ? "none" : "transform 160ms ease-out",
         }}
         className="flex items-center justify-center max-w-full max-h-full"
       >

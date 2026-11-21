@@ -16,6 +16,7 @@ import {
   DEFAULT_ADMIN_RING_COLOR,
 } from "@/lib/avatars";
 import { useWebRTCTransfer } from "@/features/p2p/hooks/useWebRTCTransfer";
+import { evictMediaCache } from "@/lib/secureMedia";
 import type { SessionConflictState } from "@/features/chat/components/SessionConflictOverlay";
 
 export interface ChatIdentity {
@@ -231,6 +232,35 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
       const idSet = new Set(ids);
       setMessages((prev) => prev.filter((m) => !idSet.has(m.id)));
     });
+
+    newSocket.on(
+      "message_attachments_updated",
+      ({
+        updates,
+      }: {
+        updates?: Array<{ id: number; attachments: ChatMessage["attachments"]; removedTokens?: string[] }>;
+      }) => {
+        if (!Array.isArray(updates) || updates.length === 0) return;
+        const allTokens: string[] = [];
+        const byId = new Map<number, ChatMessage["attachments"]>();
+        for (const u of updates) {
+          if (typeof u.id === "number" && Array.isArray(u.attachments)) {
+            byId.set(u.id, u.attachments);
+          }
+          if (Array.isArray(u.removedTokens)) {
+            for (const tok of u.removedTokens) {
+              if (tok) allTokens.push(tok);
+            }
+          }
+        }
+        if (allTokens.length > 0) evictMediaCache(allTokens, true);
+        if (byId.size > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (byId.has(m.id) ? { ...m, attachments: byId.get(m.id) } : m))
+          );
+        }
+      }
+    );
 
     newSocket.on("device_status_changed", ({ deviceId: targetId, status }: { deviceId: string; status: SenderDeviceStatus }) => {
       if (!targetId) return;
