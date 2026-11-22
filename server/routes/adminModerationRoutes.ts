@@ -10,13 +10,14 @@ import {
   logActivity,
   pickUnusedAnimalPreset,
   resolveAdminAlert,
+  resolveAllPendingAlerts,
   setDeviceBan,
   setDeviceMute,
   softDeleteMessage,
   unbanIp,
 } from '../../src/lib/db';
 import { applyDeviceRename, clients, getActiveAdminSession, getIoRef, jsonErr, jsonOk, parseJsonBody, resolveClientIp } from '../state';
-import { pushRestrictionState } from '../security';
+import { pushRestrictionState, syncFastDeviceMute } from '../security';
 
 async function emitIpDevicesStatus(ip: string) {
   const ioRef = getIoRef();
@@ -60,6 +61,7 @@ export async function handleAdminModerationRoutes(
     const minutes = Math.max(0, Math.min(1440, Number(body.minutes) || 0));
     const reason = String(body.reason || (minutes > 0 ? `ระงับการส่ง ${minutes} นาทีโดย Admin` : 'ปลดระงับการส่ง')).slice(0, 200);
     const mutedUntil = await setDeviceMute(deviceId, minutes, reason);
+    syncFastDeviceMute(deviceId, mutedUntil, reason);
     pushRestrictionState(deviceId, undefined, { mutedUntil, reason });
     const devForMute = await getDeviceProfile(deviceId);
     if (ioRef) {
@@ -204,6 +206,14 @@ export async function handleAdminModerationRoutes(
   if (pathname === '/api/admin/alerts' && req.method === 'GET') {
     const alerts = await getAdminAlerts(200);
     jsonOk(res, alerts);
+    return true;
+  }
+
+  if (pathname === '/api/admin/alerts/resolve-all' && req.method === 'POST') {
+    const resolvedCount = await resolveAllPendingAlerts();
+    logActivity('ADMIN_RESOLVE_ALL_ALERTS', 'admin', clientIp, `Resolved ${resolvedCount} pending alerts`).catch(() => {});
+    if (ioRef) ioRef.to('admins').emit('admin_alerts_cleared', { resolvedCount });
+    jsonOk(res, { success: true, resolvedCount });
     return true;
   }
 

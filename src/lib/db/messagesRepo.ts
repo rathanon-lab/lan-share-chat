@@ -261,6 +261,97 @@ export async function getAllMessages(opts?: { includeDeletedAudit?: boolean }): 
     getSystemSettings(),
   ]);
 
+  return hydrateMessageRows(rows, edits, devices, bannedIpRows, settings, opts?.includeDeletedAudit);
+}
+
+export interface MessagesPageResult {
+  messages: MessageRowRecord[];
+  hasMore: boolean;
+  oldestId: number | null;
+  totalCount: number;
+}
+
+export async function getMessagesPage(opts?: {
+  limit?: number;
+  beforeId?: number | null;
+  search?: string;
+  includeDeletedAudit?: boolean;
+}): Promise<MessagesPageResult> {
+  const limit = Math.max(10, Math.min(200, Math.floor(Number(opts?.limit) || 60)));
+  const beforeId = opts?.beforeId && Number.isFinite(opts.beforeId) && opts.beforeId > 0 ? Math.floor(opts.beforeId) : null;
+  const search = (opts?.search || '').trim();
+
+  const whereParts: string[] = [];
+  const params: unknown[] = [];
+  if (beforeId !== null) {
+    whereParts.push('id < ?');
+    params.push(beforeId);
+  }
+  if (search) {
+    whereParts.push('(LOWER(COALESCE(sender, \'\')) LIKE ? OR LOWER(COALESCE(text, \'\')) LIKE ?)');
+    const pat = `%${search.toLowerCase()}%`;
+    params.push(pat, pat);
+  }
+  const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+  const totalWhere = search ? "WHERE (LOWER(COALESCE(sender, '')) LIKE ? OR LOWER(COALESCE(text, '')) LIKE ?)" : '';
+  const totalParams = search ? [`%${search.toLowerCase()}%`, `%${search.toLowerCase()}%`] : [];
+
+  const [descRows, totalRow, devices, bannedIpRows, settings] = await Promise.all([
+    dbAll<MessageRowRecord>(`SELECT * FROM messages ${whereClause} ORDER BY id DESC LIMIT ?`, [...params, limit + 1]),
+    dbGet<{ c: number }>(`SELECT COUNT(*) AS c FROM messages ${totalWhere}`, totalParams),
+    dbAll<{
+      deviceId: string;
+      avatarUrl: string | null;
+      os: string | null;
+      lastIp: string | null;
+      isBanned: number | null;
+      mutedUntil: number | null;
+    }>('SELECT deviceId, avatarUrl, os, lastIp, isBanned, mutedUntil FROM devices'),
+    dbAll<{ ip: string }>('SELECT ip FROM banned_ips'),
+    getSystemSettings(),
+  ]);
+
+  const hasMore = descRows.length > limit;
+  const pageDesc = hasMore ? descRows.slice(0, limit) : descRows;
+  const rows = pageDesc.reverse();
+
+  let edits: MessageRowRecord[] = [];
+  if (rows.length > 0) {
+    const ids = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
+    if (ids.length > 0) {
+      const ph = ids.map(() => '?').join(',');
+      edits = await dbAll<MessageRowRecord>(
+        `SELECT id, messageId, previousText, newText, editedBy, editedByDeviceId, editedAt FROM message_edits WHERE messageId IN (${ph}) ORDER BY editedAt ASC, id ASC`,
+        ids
+      );
+    }
+  }
+
+  const messages = hydrateMessageRows(rows, edits, devices, bannedIpRows, settings, opts?.includeDeletedAudit);
+  const oldestId = messages.length > 0 ? Number(messages[0].id) || null : null;
+  return {
+    messages,
+    hasMore,
+    oldestId,
+    totalCount: Number(totalRow?.c) || messages.length,
+  };
+}
+
+function hydrateMessageRows(
+  rows: MessageRowRecord[],
+  edits: MessageRowRecord[],
+  devices: Array<{
+    deviceId: string;
+    avatarUrl: string | null;
+    os: string | null;
+    lastIp: string | null;
+    isBanned: number | null;
+    mutedUntil: number | null;
+  }>,
+  bannedIpRows: Array<{ ip: string }>,
+  settings: { adminAvatarUrl: string },
+  includeDeletedAudit?: boolean
+): MessageRowRecord[] {
   const deviceById = new Map<string, (typeof devices)[number]>();
   for (const d of devices) {
     if (d.deviceId) deviceById.set(d.deviceId, d);
@@ -276,7 +367,7 @@ export async function getAllMessages(opts?: { includeDeletedAudit?: boolean }): 
 
   return rows.map((row) => {
     const clean = sanitizeMessageForClient(row, {
-      includeDeletedAudit: opts?.includeDeletedAudit,
+      includeDeletedAudit,
       editHistory: editsByMsg.get(Number(row.id)) || [],
     });
     if (row.isAdmin || row.senderDeviceId === 'admin') {

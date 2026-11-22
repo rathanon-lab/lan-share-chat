@@ -1,4 +1,4 @@
-# Multi-Stage Production Image for LAN Share Chat v3.0 (Node.js 24 LTS)
+# Multi-Stage Production Image for LAN Share Chat v3.2.0 (Node.js 24 LTS)
 FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app

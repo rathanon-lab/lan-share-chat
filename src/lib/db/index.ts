@@ -1,10 +1,13 @@
-export { db, dbAll, dbGet, dbRun } from './client';
+export { controlDb, db, dbAll, dbGet, dbRun, getDualDbStatus } from './client';
 export {
   DEFAULT_SETTINGS,
+  getCachedSystemSettings,
   getSystemSettings,
+  patchFastControlGate,
   resetSystemSettings,
   updateSystemSettings,
   type SessionPolicy,
+  type StickerPickerGifMode,
   type SystemSettings,
 } from './settingsRepo';
 export {
@@ -34,14 +37,27 @@ export {
   getAllMessages,
   getMessageById,
   getMessageEdits,
+  getMessagesPage,
   markAttachmentsDeletedInMessages,
   markMessagesReadUpTo,
   recordMessageEdit,
   sanitizeMessageForClient,
   saveMessage,
   softDeleteMessage,
+  type MessagesPageResult,
   type SaveMessageInput,
 } from './messagesRepo';
+export {
+  deleteMessagesByFilter,
+  detectSuspectedBotSenders,
+  getMessageSendersSummary,
+  previewMessagesByFilter,
+  type BotSuspectsReport,
+  type MessageSenderSummary,
+  type PurgeFilterParams,
+  type PurgeFilterPreview,
+  type SuspectedBotSender,
+} from './moderationPurgeRepo';
 export {
   deleteAllUploadedFiles,
   deleteUploadedFile,
@@ -69,9 +85,11 @@ export {
   clearAdminAlerts,
   createAdminAlert,
   getAdminAlerts,
+  getPendingAlertsCount,
   getRecentLogs,
   logActivity,
   resolveAdminAlert,
+  resolveAllPendingAlerts,
 } from './alertsLogsRepo';
 export {
   clearAllTelemetry,

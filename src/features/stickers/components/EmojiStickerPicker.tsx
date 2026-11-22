@@ -6,7 +6,8 @@ import {
   Smile, Sticker as StickerIcon, Clock, Settings, X, Search,
   ArrowUp, ArrowDown, Eye, EyeOff, FolderUp, Sparkles, Maximize2, Minimize2
 } from "lucide-react";
-import type { StickerItem, StickerPack, StickerPreviewMode } from "@/types/chat";
+import type { StickerItem, StickerPack, StickerPickerGifMode, StickerPreviewMode } from "@/types/chat";
+import { useVisibilityInViewport } from "@/lib/secureMedia";
 import { UNIFIED_EMOJI_CATEGORIES, UnifiedEmojiItem } from "@/features/stickers/lib/emojiCatalog";
 import {
   loadHiddenPackIds,
@@ -27,11 +28,60 @@ interface EmojiStickerPickerProps {
   isDark?: boolean;
   previewMode?: StickerPreviewMode;
   collageEnabled?: boolean;
+  gifMode?: StickerPickerGifMode;
   onSelectEmoji: (char: string) => void;
   onSendSticker: (pack: StickerPack, item: StickerItem) => void;
   onStageStickerForTray?: (pack: StickerPack, item: StickerItem, enterCollage?: boolean) => void;
   onClose: () => void;
   showAdminShortcut?: boolean;
+}
+
+/**
+ * Viewport-gated sticker tile for EmojiStickerPicker.
+ * - Unmounts off-screen <img> elements so iPad/mobile Safari only decodes visible rows.
+ * - Supports both Option B ('live_viewport': animated GIF while visible) and
+ *   Option A ('static_poster': lightweight Lossy WebP first-frame poster, animated on hover).
+ */
+function ViewportStickerImg({
+  url,
+  alt,
+  className,
+  gifMode = 'live_viewport',
+  scrollRoot,
+}: {
+  url: string;
+  alt: string;
+  className: string;
+  gifMode?: StickerPickerGifMode;
+  scrollRoot?: Element | null;
+}) {
+  const { ref, inView } = useVisibilityInViewport('90px', scrollRoot);
+  const [hovered, setHovered] = useState(false);
+  const isAnimatedExt = /\.(gif|webp|apng)(\?|$)/i.test(url);
+  const usePoster = gifMode === 'static_poster' && isAnimatedExt && !hovered && url.startsWith('/api/stickers/asset/');
+  const resolvedSrc = usePoster ? `${url}${url.includes('?') ? '&' : '?'}poster=1` : url;
+
+  return (
+    <div
+      ref={ref}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`inline-flex items-center justify-center ${className}`}
+    >
+      {inView ? (
+        <img
+          src={resolvedSrc}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+          draggable={false}
+        />
+      ) : (
+        <div aria-hidden="true" className="w-full h-full rounded-xl bg-slate-200/40 dark:bg-slate-800/40" />
+      )}
+    </div>
+  );
 }
 
 const EMOJI_CATEGORY_ICONS: Record<string, string> = {
@@ -49,6 +99,7 @@ export function EmojiStickerPicker({
   isDark = false,
   previewMode = 'fullscreen_modal',
   collageEnabled = true,
+  gifMode = 'live_viewport',
   onSelectEmoji,
   onSendSticker,
   onStageStickerForTray,
@@ -70,6 +121,7 @@ export function EmojiStickerPicker({
   const [drawerHeightPx, setDrawerHeightPx] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const [scrollRootEl, setScrollRootEl] = useState<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressNextClickRef = useRef(false);
@@ -604,7 +656,7 @@ export function EmojiStickerPicker({
           </div>
 
           {/* Scrollable Content Grid */}
-          <div className="flex-1 overflow-y-auto px-3 pb-3">
+          <div ref={setScrollRootEl} className="flex-1 overflow-y-auto px-3 pb-3">
             {mode === 'emoji' ? (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -663,11 +715,12 @@ export function EmojiStickerPicker({
                         title={`${item.alt} (${pack.name})`}
                         className={`group flex flex-col items-center justify-center p-1.5 rounded-xl active:scale-95 transition cursor-pointer ${gridBtnHover}`}
                       >
-                        <img
-                          src={item.url}
+                        <ViewportStickerImg
+                          url={item.url}
                           alt={item.alt}
-                          className="w-16 h-16 sm:w-18 sm:h-18 object-contain group-hover:scale-105 transition-transform"
-                          draggable={false}
+                          gifMode={gifMode}
+                          scrollRoot={scrollRootEl}
+                          className="w-16 h-16 sm:w-18 sm:h-18"
                         />
                       </button>
                     ))}
@@ -693,11 +746,12 @@ export function EmojiStickerPicker({
                         title={item.alt}
                         className={`group flex flex-col items-center justify-center p-1.5 rounded-xl active:scale-95 transition cursor-pointer ${gridBtnHover}`}
                       >
-                        <img
-                          src={item.url}
+                        <ViewportStickerImg
+                          url={item.url}
                           alt={item.alt}
-                          className="w-16 h-16 sm:w-18 sm:h-18 object-contain group-hover:scale-105 transition-transform"
-                          draggable={false}
+                          gifMode={gifMode}
+                          scrollRoot={scrollRootEl}
+                          className="w-16 h-16 sm:w-18 sm:h-18"
                         />
                       </button>
                     ))}
@@ -740,22 +794,23 @@ export function EmojiStickerPicker({
                   <span className="text-[11px] font-semibold text-slate-400 shrink-0">{activePack.items.length} ตัว</span>
                 </div>
 
-                {/* 4-to-8 Column Transparent Sticker Grid */}
-                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                {/* 4-to-8 Column Transparent Sticker Grid (keyed by packId to immediately unmount old pack on switch) */}
+                <div key={activePack.packId} className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
                   {activePack.items.map((item) => (
                     <button
-                      key={item.stickerId}
+                      key={`${activePack.packId}-${item.stickerId}`}
                       type="button"
                       data-testid={`sticker-item-${activePack.packId}-${item.stickerId}`}
                       {...stickerTileHandlers(activePack, item)}
                       title={item.alt}
                       className={`group flex flex-col items-center justify-center p-1.5 rounded-xl active:scale-95 transition cursor-pointer ${gridBtnHover}`}
                     >
-                      <img
-                        src={item.url}
+                      <ViewportStickerImg
+                        url={item.url}
                         alt={item.alt}
-                        className={`${isExpanded ? 'w-20 h-20 sm:w-24 sm:h-24' : 'w-16 h-16 sm:w-20 sm:h-20'} object-contain group-hover:scale-105 transition-transform`}
-                        draggable={false}
+                        gifMode={gifMode}
+                        scrollRoot={scrollRootEl}
+                        className={isExpanded ? 'w-20 h-20 sm:w-24 sm:h-24' : 'w-16 h-16 sm:w-20 sm:h-20'}
                       />
                     </button>
                   ))}

@@ -56,7 +56,7 @@ export function AdminFilesTab({
   onResetFiles: () => void;
   onDeleteFile: (id: number) => void;
   onBatchDeleteFiles: (ids: number[], names: string[]) => void;
-  onPreviewFile: (f: PreviewableFile) => void;
+  onPreviewFile: (f: PreviewableFile, gallery?: PreviewableFile[], index?: number) => void;
 }) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [category, setCategory] = useState<FileCategory>("all");
@@ -95,6 +95,30 @@ export function AdminFilesTab({
     [filteredFiles, visibleCount]
   );
   const hasMoreFiles = visibleFiles.length < filteredFiles.length;
+
+  const previewGallery = useMemo<PreviewableFile[]>(
+    () =>
+      filteredFiles
+        .filter((f) => Boolean(f.mediaToken))
+        .map((f) => ({
+          fileName: f.originalName,
+          fileSize: f.fileSize,
+          mimeType: f.mimeType,
+          mediaToken: f.mediaToken,
+        })),
+    [filteredFiles]
+  );
+
+  function openGalleryPreview(f: AdminUploadedFileItem) {
+    const previewObj: PreviewableFile = {
+      fileName: f.originalName,
+      fileSize: f.fileSize,
+      mimeType: f.mimeType,
+      mediaToken: f.mediaToken,
+    };
+    const idx = previewGallery.findIndex((item) => item.mediaToken === f.mediaToken);
+    onPreviewFile(previewObj, previewGallery.length > 1 ? previewGallery : undefined, idx >= 0 ? idx : 0);
+  }
 
   useEffect(() => {
     if (!hasMoreFiles) return;
@@ -305,7 +329,6 @@ export function AdminFilesTab({
             const idNum = Number(f.id);
             const isChecked = activeSelectedIds.has(idNum);
             const canPreview = Boolean(f.mediaToken && isRichPreviewSupported(f.originalName, f.mimeType));
-            const previewObj = { fileName: f.originalName, fileSize: f.fileSize, mimeType: f.mimeType, mediaToken: f.mediaToken };
 
             return (
               <div
@@ -381,12 +404,12 @@ export function AdminFilesTab({
                   </span>
 
                   {cat === "image" && f.mediaToken && (
-                    <div onClick={() => onPreviewFile(previewObj)} style={{ width: "100%", height: "100%", cursor: "pointer" }} title="คลิกเพื่อดูภาพเต็มจอ">
+                    <div onClick={() => openGalleryPreview(f)} style={{ width: "100%", height: "100%", cursor: "pointer" }} title="คลิกเพื่อดูภาพเต็มจอ">
                       <SecureImage token={f.mediaToken} thumbnail alt={f.originalName} fileName={f.originalName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     </div>
                   )}
                   {cat === "video" && f.mediaToken && (
-                    <div onClick={() => onPreviewFile(previewObj)} style={{ width: "100%", height: "100%", cursor: "pointer", position: "relative" }} title="คลิกเพื่อเล่นวิดีโอ">
+                    <div onClick={() => openGalleryPreview(f)} style={{ width: "100%", height: "100%", cursor: "pointer", position: "relative" }} title="คลิกเพื่อเล่นวิดีโอ">
                       <SecureVideo token={f.mediaToken} controls={false} muted style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
                       <div style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,0.32)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: "rgba(24,119,242,0.92)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.35)" }}>
@@ -405,7 +428,7 @@ export function AdminFilesTab({
                   )}
                   {cat === "other" && (
                     <div
-                      onClick={() => canPreview && onPreviewFile(previewObj)}
+                      onClick={() => canPreview && openGalleryPreview(f)}
                       style={{
                         width: "100%",
                         height: "100%",
@@ -438,7 +461,7 @@ export function AdminFilesTab({
 
                 <div style={{ display: "flex", gap: "6px", marginTop: "auto", paddingTop: "4px", borderTop: `1px solid ${FB.border}` }}>
                   {canPreview && (
-                    <button type="button" onClick={() => onPreviewFile(previewObj)} style={{ ...css.btn("secondary"), flex: 1, justifyContent: "center", padding: "6px 8px", color: FB.blue }} title="พรีวิวไฟล์">
+                    <button type="button" onClick={() => openGalleryPreview(f)} style={{ ...css.btn("secondary"), flex: 1, justifyContent: "center", padding: "6px 8px", color: FB.blue }} title="พรีวิวไฟล์">
                       <Eye size={14} /> ดู
                     </button>
                   )}
@@ -463,7 +486,6 @@ export function AdminFilesTab({
             const idNum = Number(f.id);
             const isChecked = activeSelectedIds.has(idNum);
             const canPreview = Boolean(f.mediaToken && isRichPreviewSupported(f.originalName, f.mimeType));
-            const previewObj = { fileName: f.originalName, fileSize: f.fileSize, mimeType: f.mimeType, mediaToken: f.mediaToken };
 
             return (
               <div
@@ -486,7 +508,7 @@ export function AdminFilesTab({
                 />
 
                 <div
-                  onClick={() => canPreview && onPreviewFile(previewObj)}
+                  onClick={() => canPreview && openGalleryPreview(f)}
                   style={{
                     width: "48px",
                     height: "48px",
@@ -530,7 +552,7 @@ export function AdminFilesTab({
                   </div>
                 )}
                 {canPreview && (
-                  <button type="button" onClick={() => onPreviewFile(previewObj)} style={{ ...css.btn("secondary"), color: FB.blue }} title="พรีวิวไฟล์">
+                  <button type="button" onClick={() => openGalleryPreview(f)} style={{ ...css.btn("secondary"), color: FB.blue }} title="พรีวิวไฟล์">
                     <Eye size={14} />
                   </button>
                 )}

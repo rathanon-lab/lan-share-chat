@@ -20,12 +20,14 @@ export function AdminAlertsTab({
   alerts,
   pendingAlertCount,
   onResolveAlert,
+  onResolveAllAlerts,
   onResetAlerts,
   onGoToChat,
 }: {
   alerts: AdminAlertItem[];
   pendingAlertCount: number;
   onResolveAlert: (id: number, action: "approve_delete" | "reject" | "resolved") => void;
+  onResolveAllAlerts?: () => void;
   onResetAlerts: () => void;
   onGoToChat: () => void;
 }) {
@@ -44,11 +46,23 @@ export function AdminAlertsTab({
         <span style={css.badge(pendingAlertCount > 0)}>
           <Bell size={12} /> {pendingAlertCount} รายการรอดำเนินการ · ทั้งหมด {alerts.length}
         </span>
-        {alerts.length > 0 && (
-          <button onClick={onResetAlerts} style={css.btn("danger")}>
-            <Trash2 size={15} /> ล้างประวัติแจ้งเตือน
-          </button>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          {pendingAlertCount > 0 && onResolveAllAlerts && (
+            <button
+              type="button"
+              data-testid="alerts-resolve-all-btn"
+              onClick={onResolveAllAlerts}
+              style={css.btn("primary")}
+            >
+              <CheckCircle2 size={15} /> ปิดงานค้างทั้งหมด ({pendingAlertCount})
+            </button>
+          )}
+          {alerts.length > 0 && (
+            <button onClick={onResetAlerts} style={css.btn("danger")}>
+              <Trash2 size={15} /> ล้างประวัติแจ้งเตือน
+            </button>
+          )}
+        </div>
       </div>
 
       {alerts.length === 0 ? (

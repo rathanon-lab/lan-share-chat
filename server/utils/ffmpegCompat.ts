@@ -1,6 +1,5 @@
 import { execFile, execFileSync } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import {
   ADMIN_PASSWORD,
@@ -10,9 +9,10 @@ import {
   MIN_DISK_FREE_MB,
   videoCacheDir,
 } from '../config';
-import { logActivity } from '../../src/lib/db';
+import { getDualDbStatus, logActivity } from '../../src/lib/db';
 import type { RuntimeStorageSummary } from '../../src/types/chat';
 import { enforceCacheLruQuota, getRuntimeStorageReport } from './storageRuntime';
+import { getMediaWorkerStatus, runMediaWorkerTask } from './mediaWorkerQueue';
 
 export interface FfmpegCapability {
   available: boolean;
@@ -53,24 +53,11 @@ let cachedCapability: FfmpegCapability | null = null;
 let envDiagnosticLogs: EnvDiagnosticLog[] = [];
 const inFlightTranscodes = new Map<string, Promise<string | null>>();
 const inFlightThumbnails = new Map<string, Promise<string | null>>();
+const inFlightPosters = new Map<string, Promise<string | null>>();
 
-const MAX_FFMPEG_WORKERS = Math.min(4, Math.max(2, os.cpus().length));
-let activeFfmpegWorkers = 0;
-const ffmpegWaitQueue: Array<() => void> = [];
-
-/** Bounds concurrent FFmpeg child processes to prevent blocking I/O / CPU exhaustion under bursts. */
+/** Delegates to Dynamic Adaptive Media Worker Queue (auto-tuned from cgroup/host CPU & RAM + backpressure). */
 async function runFfmpegTask<T>(task: () => Promise<T>): Promise<T> {
-  if (activeFfmpegWorkers >= MAX_FFMPEG_WORKERS) {
-    await new Promise<void>((resolve) => ffmpegWaitQueue.push(resolve));
-  }
-  activeFfmpegWorkers += 1;
-  try {
-    return await task();
-  } finally {
-    activeFfmpegWorkers = Math.max(0, activeFfmpegWorkers - 1);
-    const next = ffmpegWaitQueue.shift();
-    if (next) next();
-  }
+  return runMediaWorkerTask(task);
 }
 
 function tryProbeBinary(bin: string): { ok: boolean; version: string | null; err: string | null } {
@@ -236,6 +223,32 @@ export function getReadOnlyEnvAudit(): ReadOnlyEnvStatusResponse {
       valuePreview: `NODE_ENV=${nodeEnv} | ChatMax=${MAX_CHAT_FILE_SIZE_MB}MB (x${MAX_CHAT_FILES_BATCH}) | P2PMax=${MAX_P2P_FILE_SIZE_MB}MB | MinFree=${MIN_DISK_FREE_MB}MB${publicHost ? ` | Host=${publicHost}` : ''}`,
       hint: 'แก้ไขได้ในไฟล์ .env แล้วปิด-เปิดเซิร์ฟเวอร์ใหม่เท่านั้น',
     },
+    (() => {
+      const mw = getMediaWorkerStatus();
+      return {
+        key: 'MEDIA_WORKER_CONCURRENCY',
+        label: 'Dynamic Adaptive Media Worker Queue',
+        category: 'media' as const,
+        status: mw.backpressureActive ? ('warning' as const) : ('ok' as const),
+        valuePreview: `mode=${mw.mode} (${mw.envOverride}) | limit=${mw.currentLimit}/${mw.baseConcurrency} | active=${mw.activeWorkers} queued=${mw.queuedTasks} | ${mw.effectiveCpus} vCPU / ${mw.effectiveRamGb} GB RAM`,
+        hint: mw.backpressureActive
+          ? 'RAM เหลือน้อยกว่า 15% ระบบลดคิวขนานอัตโนมัติ (Adaptive Backpressure) เพื่อป้องกัน OOM'
+          : 'คำนวณคิวประมวลผล FFmpeg/Thumbnail อัตโนมัติตาม CPU/RAM จริงของเครื่อง (หรือระบุตัวเลขใน MEDIA_WORKER_CONCURRENCY)',
+      };
+    })(),
+    (() => {
+      const dbs = getDualDbStatus();
+      const dataKb = Math.round(dbs.dataDbBytes / 1024);
+      const ctrlKb = Math.round(dbs.controlDbBytes / 1024);
+      return {
+        key: 'DUAL_SQLITE_BULKHEAD',
+        label: 'Dual-SQLite Control / Data Plane Bulkhead (WAL)',
+        category: 'storage' as const,
+        status: 'ok' as const,
+        valuePreview: `Control=${ctrlKb} KB (control_plane.sqlite) | Data=${dataKb} KB (database.sqlite)`,
+        hint: 'แยกไฟล์ DB คำสั่งแอดมิน (Control Plane) ออกจากข้อความ/สแปม (Data Plane) เพื่อไม่ให้ปุ่มฉุกเฉินติด SQLite Lock',
+      };
+    })(),
   ];
 
   const missingCount = items.filter((i) => i.status === 'missing').length;
@@ -433,4 +446,48 @@ export async function getOrCreateMediaThumbnail(
 
   inFlightThumbnails.set(thumbPath, job);
   return job;
+}
+
+/**
+ * Extracts and caches a compact static first-frame Lossy WebP poster (<= 200px)
+ * for animated GIF/WebP stickers so mobile/iPad pickers can render lightweight posters.
+ */
+export async function getOrCreateGifStaticPoster(
+  originalFilePath: string,
+  cacheKey: string
+): Promise<{ path: string; contentType: string } | null> {
+  const safeKey = cacheKey.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const posterWebp = path.join(videoCacheDir, `sticker_poster_${safeKey}.webp`);
+  if (fs.existsSync(posterWebp)) {
+    try {
+      if (fs.statSync(posterWebp).size > 0) return { path: posterWebp, contentType: 'image/webp' };
+    } catch {}
+  }
+
+  const cap = probeFfmpegCapability();
+  if (!cap.available || !cap.ffmpegBin) return null;
+
+  if (inFlightPosters.has(posterWebp)) {
+    const p = await inFlightPosters.get(posterWebp)!;
+    return p ? { path: p, contentType: 'image/webp' } : null;
+  }
+
+  const job = runFfmpegTask(async () => {
+    const nonce = `${Date.now()}-${Math.round(Math.random() * 1e5)}`;
+    const tmpWebp = `${posterWebp}.${nonce}.tmp.webp`;
+    const webpOk = await execFfmpegToFile(
+      cap.ffmpegBin!,
+      ['-y', '-i', originalFilePath, '-vframes', '1', '-vf', "scale='min(200,iw)':-2", '-c:v', 'libwebp', '-quality', '75', tmpWebp],
+      tmpWebp,
+      posterWebp,
+      10_000
+    );
+    return webpOk;
+  }).finally(() => {
+    inFlightPosters.delete(posterWebp);
+  });
+
+  inFlightPosters.set(posterWebp, job);
+  const done = await job;
+  return done ? { path: done, contentType: 'image/webp' } : null;
 }

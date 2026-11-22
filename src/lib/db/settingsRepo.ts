@@ -8,6 +8,7 @@ import { dbAll, dbRun } from './client';
 
 export type SessionPolicy = 'takeover' | 'block' | 'multi_allow';
 export type StickerPreviewMode = 'fullscreen_modal' | 'docked_tray';
+export type StickerPickerGifMode = 'live_viewport' | 'static_poster';
 
 export interface SystemSettings {
   voiceMessageEnabled: boolean;
@@ -28,6 +29,7 @@ export interface SystemSettings {
   maxConcurrentUsers: number;
   stickerPreviewMode: StickerPreviewMode;
   stickerCollageEnabled: boolean;
+  stickerPickerGifMode: StickerPickerGifMode;
 }
 
 export const DEFAULT_SETTINGS: SystemSettings = {
@@ -49,7 +51,26 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   maxConcurrentUsers: 100,
   stickerPreviewMode: 'fullscreen_modal',
   stickerCollageEnabled: true,
+  stickerPickerGifMode: 'live_viewport',
 };
+
+// In-Memory Control Plane Cache (0.1ms synchronous override for emergency gates)
+let cachedSettings: SystemSettings | null = null;
+
+export function getCachedSystemSettings(): SystemSettings | null {
+  return cachedSettings;
+}
+
+export function patchFastControlGate(partial: Partial<SystemSettings>): void {
+  if (!cachedSettings) {
+    cachedSettings = { ...DEFAULT_SETTINGS };
+  }
+  if (typeof partial.chatLocked === 'boolean') cachedSettings.chatLocked = partial.chatLocked;
+  if (typeof partial.chatBlurred === 'boolean') cachedSettings.chatBlurred = partial.chatBlurred;
+  if (typeof partial.adminHoldActive === 'boolean') cachedSettings.adminHoldActive = partial.adminHoldActive;
+  if (partial.chatLocked === true || partial.chatBlurred === true) cachedSettings.adminHoldActive = true;
+  if (typeof partial.antiSpamEnabled === 'boolean') cachedSettings.antiSpamEnabled = partial.antiSpamEnabled;
+}
 
 function clampInt(raw: unknown, minVal: number, maxVal: number, fallback: number): number {
   const n = Number(raw);
@@ -76,8 +97,11 @@ export async function getSystemSettings(): Promise<SystemSettings> {
   const chatLocked = map.get('chatLocked') === 'true';
   const chatBlurred = map.get('chatBlurred') === 'true';
   const adminHoldActive = chatLocked || chatBlurred || map.get('adminHoldActive') === 'true';
+  const rawGifMode = map.get('stickerPickerGifMode');
+  const stickerPickerGifMode: StickerPickerGifMode =
+    rawGifMode === 'static_poster' ? 'static_poster' : 'live_viewport';
 
-  return {
+  const result: SystemSettings = {
     voiceMessageEnabled: map.get('voiceMessageEnabled') !== 'false',
     deletePolicy,
     editWindowMinutes: clampInt(map.get('editWindowMinutes'), 1, 1440, DEFAULT_SETTINGS.editWindowMinutes),
@@ -107,7 +131,10 @@ export async function getSystemSettings(): Promise<SystemSettings> {
         : clampInt(map.get('maxConcurrentUsers'), 0, 1000, DEFAULT_SETTINGS.maxConcurrentUsers),
     stickerPreviewMode: map.get('stickerPreviewMode') === 'docked_tray' ? 'docked_tray' : 'fullscreen_modal',
     stickerCollageEnabled: map.get('stickerCollageEnabled') !== 'false',
+    stickerPickerGifMode,
   };
+  cachedSettings = result;
+  return result;
 }
 
 async function setSetting(key: string, value: string): Promise<void> {
@@ -115,6 +142,9 @@ async function setSetting(key: string, value: string): Promise<void> {
 }
 
 export async function updateSystemSettings(partial: Partial<SystemSettings>): Promise<SystemSettings> {
+  // Immediately flip in-memory emergency gate before awaiting disk persistence
+  patchFastControlGate(partial);
+
   if (typeof partial.voiceMessageEnabled === 'boolean') {
     await setSetting('voiceMessageEnabled', String(partial.voiceMessageEnabled));
   }
@@ -123,6 +153,9 @@ export async function updateSystemSettings(partial: Partial<SystemSettings>): Pr
   }
   if (typeof partial.stickerCollageEnabled === 'boolean') {
     await setSetting('stickerCollageEnabled', String(partial.stickerCollageEnabled));
+  }
+  if (partial.stickerPickerGifMode && ['live_viewport', 'static_poster'].includes(partial.stickerPickerGifMode)) {
+    await setSetting('stickerPickerGifMode', partial.stickerPickerGifMode);
   }
   if (partial.deletePolicy && ['hybrid_15m', 'self_always', 'admin_only'].includes(partial.deletePolicy)) {
     await setSetting('deletePolicy', partial.deletePolicy);

@@ -32,6 +32,10 @@ export function useAdminDashboard(token: string) {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [overview, setOverview] = useState<AdminOverviewStats | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesHasMore, setMessagesHasMore] = useState(false);
+  const [messagesOldestId, setMessagesOldestId] = useState<number | null>(null);
+  const [messagesTotalCount, setMessagesTotalCount] = useState(0);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [files, setFiles] = useState<AdminUploadedFileItem[]>([]);
   const [devices, setDevices] = useState<AdminDeviceItem[]>([]);
   const [bannedIps, setBannedIps] = useState<Array<{ ip: string; reason: string; bannedAt: number }>>([]);
@@ -70,12 +74,26 @@ export function useAdminDashboard(token: string) {
     maxConcurrentUsers: 100,
     stickerPreviewMode: "fullscreen_modal",
     stickerCollageEnabled: true,
+    stickerPickerGifMode: "live_viewport",
   });
 
   const activeTabRef = useRef<AdminTab>(activeTab);
+  const searchQueryRef = useRef<string>(searchQuery);
+  const messagesOldestIdRef = useRef<number | null>(null);
+  const messagesHasMoreRef = useRef<boolean>(false);
+  const loadingOlderRef = useRef<boolean>(false);
+  const incomingMsgBufferRef = useRef<ChatMessage[]>([]);
+  const incomingAlertBufferRef = useRef<AdminAlertItem[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAlertToastAtRef = useRef<number>(0);
+
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
 
   const notify = useCallback((text: string, type: "success" | "error" = "success") => {
     setNotification({ text, type });
@@ -122,15 +140,77 @@ export function useAdminDashboard(token: string) {
     [apiFetch, notify]
   );
 
-  const loadMessages = useCallback(async () => {
-    setLoading(true);
+  const loadMessages = useCallback(
+    async (searchOverride?: string, silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const q = (searchOverride !== undefined ? searchOverride : searchQueryRef.current).trim();
+        const qs = new URLSearchParams({ limit: "60" });
+        if (q) qs.set("search", q);
+        const res = await apiFetch(`/api/admin/messages?${qs.toString()}`);
+        if (Array.isArray(res)) {
+          setMessages(res);
+          messagesHasMoreRef.current = false;
+          setMessagesHasMore(false);
+          messagesOldestIdRef.current = res.length > 0 ? Number(res[0]?.id || 0) || null : null;
+          setMessagesOldestId(messagesOldestIdRef.current);
+          setMessagesTotalCount(res.length);
+        } else {
+          const list: ChatMessage[] = Array.isArray(res?.messages) ? res.messages : [];
+          const hasMore = Boolean(res?.hasMore);
+          const oldestId = typeof res?.oldestId === "number" ? res.oldestId : null;
+          setMessages(list);
+          messagesHasMoreRef.current = hasMore;
+          setMessagesHasMore(hasMore);
+          messagesOldestIdRef.current = oldestId;
+          setMessagesOldestId(oldestId);
+          setMessagesTotalCount(typeof res?.totalCount === "number" ? res.totalCount : list.length);
+        }
+      } catch (e: unknown) {
+        if (!silent) notify(e instanceof Error ? e.message : "Load failed", "error");
+      }
+      if (!silent) setLoading(false);
+    },
+    [apiFetch, notify]
+  );
+
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !messagesHasMoreRef.current) return;
+    const beforeId = messagesOldestIdRef.current;
+    if (!beforeId || beforeId <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlderMessages(true);
     try {
-      setMessages(await apiFetch("/api/admin/messages"));
-    } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : "Load failed", "error");
+      const q = searchQueryRef.current.trim();
+      const qs = new URLSearchParams({ limit: "60", beforeId: String(beforeId) });
+      if (q) qs.set("search", q);
+      const res = await apiFetch(`/api/admin/messages?${qs.toString()}`);
+      const older: ChatMessage[] = Array.isArray(res?.messages) ? res.messages : [];
+      const nextHasMore = Boolean(res?.hasMore);
+      const nextOldest = typeof res?.oldestId === "number" ? res.oldestId : null;
+      messagesHasMoreRef.current = nextHasMore;
+      setMessagesHasMore(nextHasMore);
+      if (nextOldest !== null) {
+        messagesOldestIdRef.current = nextOldest;
+        setMessagesOldestId(nextOldest);
+      }
+      if (typeof res?.totalCount === "number") {
+        setMessagesTotalCount(res.totalCount);
+      }
+      if (older.length > 0) {
+        setMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          const uniqueOlder = older.filter((m) => !seen.has(m.id));
+          return uniqueOlder.length > 0 ? [...uniqueOlder, ...prev] : prev;
+        });
+      }
+    } catch {
+      // ignore transient error on reverse scroll
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlderMessages(false);
     }
-    setLoading(false);
-  }, [apiFetch, notify]);
+  }, [apiFetch]);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -283,9 +363,69 @@ export function useAdminDashboard(token: string) {
       loadStickers();
     });
 
+    const scheduleCoalescedFlush = () => {
+      if (flushTimerRef.current) return;
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const msgBatch = incomingMsgBufferRef.current.splice(0);
+        if (msgBatch.length > 0) {
+          setMessagesTotalCount((c) => c + msgBatch.length);
+          if (activeTabRef.current === "chat") {
+            const q = searchQueryRef.current.trim().toLowerCase();
+            const matching = q
+              ? msgBatch.filter(
+                  (m) =>
+                    m.sender?.toLowerCase().includes(q) ||
+                    m.text?.toLowerCase().includes(q)
+                )
+              : msgBatch;
+            if (matching.length > 0) {
+              setMessages((prev) => {
+                const seen = new Set(prev.map((m) => m.id));
+                const unique = matching.filter((m) => {
+                  if (seen.has(m.id)) return false;
+                  seen.add(m.id);
+                  return true;
+                });
+                if (unique.length === 0) return prev;
+                return [...prev, ...unique];
+              });
+            }
+          }
+        }
+
+        const alertBatch = incomingAlertBufferRef.current.splice(0);
+        if (alertBatch.length > 0) {
+          setAlerts((prev) => {
+            const incomingIds = new Set(alertBatch.map((a) => a.id));
+            const merged = [...alertBatch.reverse(), ...prev.filter((a) => !incomingIds.has(a.id))];
+            return merged.slice(0, 500);
+          });
+          const now = Date.now();
+          if (now - lastAlertToastAtRef.current >= 1500) {
+            lastAlertToastAtRef.current = now;
+            const latest = alertBatch[0];
+            if (alertBatch.length > 1) {
+              notify(`มีแจ้งเตือนใหม่ ${alertBatch.length} รายการ (ล่าสุดจาก ${latest.sender || "User"})`, latest.alertType === "security_spam" ? "error" : "success");
+            } else {
+              notify(
+                latest.alertType === "delete_request"
+                  ? `คำขอลบข้อความจาก ${latest.sender}`
+                  : latest.alertType === "security_spam"
+                    ? `ตรวจพบสแปม/Flood จาก ${latest.sender}`
+                    : `มีการแท็ก @admin จาก ${latest.sender}`,
+                latest.alertType === "security_spam" ? "error" : "success"
+              );
+            }
+          }
+        }
+      }, 300);
+    };
+
     const sock = io({ auth: { isAdmin: true } });
     sock.on("receive_message", (msg: ChatMessage) => {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      incomingMsgBufferRef.current.push(msg);
+      scheduleCoalescedFlush();
     });
     sock.on("messages_read", ({ upToId, readAt }: { upToId: number; readAt: number }) => {
       if (!upToId) return;
@@ -300,22 +440,30 @@ export function useAdminDashboard(token: string) {
       setMessages((prev) => prev.map((m) => (m.id === ev.id ? { ...m, isDeleted: 1, deletedAt: ev.deletedAt, deletedBy: ev.deletedBy } : m)));
     });
     sock.on("admin_alert", (alert: AdminAlertItem) => {
-      setAlerts((prev) => [alert, ...prev.filter((a) => a.id !== alert.id)]);
-      notify(
-        alert.alertType === "delete_request"
-          ? `คำขอลบข้อความจาก ${alert.sender}`
-          : alert.alertType === "security_spam"
-            ? `ตรวจพบสแปม/Flood จาก ${alert.sender}`
-            : `มีการแท็ก @admin จาก ${alert.sender}`,
-        alert.alertType === "security_spam" ? "error" : "success"
-      );
+      incomingAlertBufferRef.current.push(alert);
+      scheduleCoalescedFlush();
     });
     sock.on("admin_alert_resolved", (updated: AdminAlertItem) => {
       setAlerts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     });
-    sock.on("admin_alerts_cleared", () => setAlerts([]));
+    sock.on("admin_alerts_cleared", (payload?: { resolvedCount?: number }) => {
+      incomingAlertBufferRef.current = [];
+      if (payload && typeof payload.resolvedCount === "number") {
+        setAlerts((prev) => prev.map((a) => (a.status === "pending" ? { ...a, status: "resolved" } : a)));
+      } else {
+        setAlerts([]);
+      }
+    });
     sock.on("settings_update", (s: SystemSettings) => setSystemSettings(s));
-    sock.on("chat_reset", () => setMessages([]));
+    sock.on("chat_reset", () => {
+      incomingMsgBufferRef.current = [];
+      setMessages([]);
+      messagesHasMoreRef.current = false;
+      setMessagesHasMore(false);
+      messagesOldestIdRef.current = null;
+      setMessagesOldestId(null);
+      setMessagesTotalCount(0);
+    });
     sock.on("message_deleted", ({ id }: { id: number }) => {
       setMessages((prev) => prev.filter((m) => m.id !== id));
     });
@@ -378,9 +526,27 @@ export function useAdminDashboard(token: string) {
       }
     });
     return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       sock.disconnect();
     };
   }, [loadAlerts, loadEnvStatus, loadServerInfo, loadSettings, loadStickers, notify, token]);
+
+  // Server-side debounced search for Admin Chat pagination
+  const didInitSearchRef = useRef(false);
+  useEffect(() => {
+    if (!didInitSearchRef.current) {
+      didInitSearchRef.current = true;
+      return;
+    }
+    if (activeTab !== "chat") return;
+    const t = setTimeout(() => {
+      loadMessages(searchQuery, true);
+    }, 260);
+    return () => clearTimeout(t);
+  }, [searchQuery, activeTab, loadMessages]);
 
   useEffect(() => {
     let iv: ReturnType<typeof setInterval> | null = null;
@@ -419,18 +585,34 @@ export function useAdminDashboard(token: string) {
     try {
       await apiFetch(`/api/admin/alerts/${alertId}/resolve`, { method: "POST", body: JSON.stringify({ action }) });
       notify(action === "approve_delete" ? "อนุมัติลบข้อความแล้ว" : action === "reject" ? "ปฏิเสธคำขอลบแล้ว" : "ปิดแจ้งเตือนแล้ว");
-      await Promise.all([loadAlerts(), loadMessages()]);
+      await Promise.all([loadAlerts(), loadMessages(undefined, true)]);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : "Failed", "error");
+    }
+  }
+
+  async function resolveAllAlerts() {
+    try {
+      const res = await apiFetch("/api/admin/alerts/resolve-all", { method: "POST" });
+      setAlerts((prev) => prev.map((a) => (a.status === "pending" ? { ...a, status: "resolved" } : a)));
+      notify(`ปิดแจ้งเตือนค้างทั้งหมดแล้ว (${res?.resolvedCount ?? 0} รายการ)`);
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : "Failed", "error");
     }
   }
 
   async function saveSettings(patch: Partial<SystemSettings>) {
+    let snapshot: SystemSettings | null = null;
+    setSystemSettings((prev) => {
+      snapshot = prev;
+      return { ...prev, ...patch };
+    });
     try {
       const updated = await apiFetch("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) });
       setSystemSettings(updated);
       notify("บันทึกการตั้งค่าแล้ว");
     } catch (e: unknown) {
+      if (snapshot) setSystemSettings(snapshot);
       notify(e instanceof Error ? e.message : "Failed", "error");
     }
   }
@@ -523,7 +705,7 @@ export function useAdminDashboard(token: string) {
           stickerMeta,
         }),
       });
-      await loadMessages();
+      await loadMessages(undefined, true);
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : "Failed", "error");
     }
@@ -649,6 +831,11 @@ export function useAdminDashboard(token: string) {
     overview,
     messages,
     setMessages,
+    messagesHasMore,
+    messagesOldestId,
+    messagesTotalCount,
+    loadingOlderMessages,
+    loadOlderMessages,
     files,
     setFiles,
     devices,
@@ -683,6 +870,7 @@ export function useAdminDashboard(token: string) {
     loadMessages,
     loadStickers,
     resolveAlert,
+    resolveAllAlerts,
     saveSettings,
     generateDeviceAlias,
     muteDevice,

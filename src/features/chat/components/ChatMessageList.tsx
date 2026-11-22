@@ -2,9 +2,10 @@
 
 import React from "react";
 import {
-  Bell, Check, CheckCheck, Download, Edit2, Eye, File as FileIcon, FileX,
-  History, ImageOff, Play, Shield, Trash2, VideoOff
+  ArrowDown, Bell, Check, CheckCheck, Download, Edit2, Eye, File as FileIcon, FileX,
+  History, ImageOff, Loader2, Play, Shield, Trash2, VideoOff
 } from "lucide-react";
+import { useChatScrollPagination } from "@/features/chat/hooks/useChatScrollPagination";
 import type { ChatAttachment, ChatMessage, SystemSettings } from "@/types/chat";
 import type { PreviewableFile } from "@/lib/filePreviewer";
 import type { EditHistoryModalState } from "@/features/chat/components/ChatModals";
@@ -44,6 +45,9 @@ interface ChatMessageListProps {
   onOpenPreviewFile: (file: PreviewableFile) => void;
   onOpenEditHistory: (modal: EditHistoryModalState) => void;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void> | void;
 }
 
 export function ChatMessageList({
@@ -64,23 +68,58 @@ export function ChatMessageList({
   onOpenPreviewFile,
   onOpenEditHistory,
   messagesEndRef,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
 }: ChatMessageListProps) {
   const [zoomedSticker, setZoomedSticker] = React.useState<ChatMessage['stickerMeta']>(null);
+  const {
+    scrollContainerRef,
+    topSentinelRef,
+    unreadDividerRef,
+    endRef,
+    showJumpToLatest,
+    unreadBelowCount,
+    unreadDividerMsgId,
+    handleScroll,
+    jumpToLatest,
+  } = useChatScrollPagination({
+    messages,
+    hasMore: hasMoreOlder,
+    loadingOlder,
+    onLoadOlder,
+    storageKey: 'lan_chat_last_read_id',
+    externalEndRef: messagesEndRef,
+  });
 
   return (
-    <div className="flex-1 min-h-0 px-2.5 py-3 md:px-4 md:py-4 overflow-y-auto overflow-x-hidden flex flex-col">
-      <div className="w-full max-w-5xl flex flex-col gap-3.5">
-        <div className="text-center my-4">
-          <span
-            className={`text-xs font-semibold px-3 py-1 rounded-full ${
-              isDark ? 'text-slate-400 bg-slate-800 border border-slate-700' : 'text-gray-400 bg-gray-100'
-            }`}
-          >
-            Today
-          </span>
-        </div>
+    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 min-h-0 px-2.5 py-3 md:px-4 md:py-4 overflow-y-auto overflow-x-hidden flex flex-col"
+      >
+        <div className="w-full max-w-5xl flex flex-col gap-3.5">
+          <div ref={topSentinelRef} className="h-1 w-full shrink-0" />
+          {loadingOlder && (
+            <div className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-blue-500">
+              <Loader2 size={14} className="animate-spin" />
+              <span>กำลังโหลดข้อความเก่ากว่า...</span>
+            </div>
+          )}
+          {!hasMoreOlder && messages.length > 0 && (
+            <div className="text-center my-2">
+              <span
+                className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                  isDark ? 'text-slate-400 bg-slate-800 border border-slate-700' : 'text-gray-400 bg-gray-100'
+                }`}
+              >
+                จุดเริ่มต้นของแชท
+              </span>
+            </div>
+          )}
 
-        {messages.map((msg, i) => {
+          {messages.map((msg, i) => {
           const isMe = Boolean(
             (msg.senderDeviceId && identityDeviceId && msg.senderDeviceId === identityDeviceId) ||
               (!msg.senderDeviceId && identityName && msg.sender === identityName)
@@ -95,14 +134,29 @@ export function ChatMessageList({
               ? undefined
               : msg.senderAvatarUrl || resolveFallbackAvatarForName(msg.sender || 'Peer');
           const senderOsBadge = !isAdmin && !isDeletedSender ? formatDeviceBadge(msg.senderOs) : null;
+          const showUnreadDivider = Boolean(unreadDividerMsgId && msg.id === unreadDividerMsgId);
+          const unreadDividerNode = showUnreadDivider ? (
+            <div
+              ref={unreadDividerRef}
+              data-testid="chat-unread-divider"
+              className="w-full flex items-center gap-2.5 my-1 select-none"
+            >
+              <div className="flex-1 h-px bg-red-500/70" />
+              <span className="text-[11px] font-bold text-red-500 px-2.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/30">
+                ข้อความใหม่ตั้งแต่ตรงนี้
+              </span>
+              <div className="flex-1 h-px bg-red-500/70" />
+            </div>
+          ) : null;
 
         // Soft-deleted tombstone
         if (msg.isDeleted) {
           return (
-            <div
-              key={msg.id || i}
-              className={`flex items-start gap-2 max-w-[92%] md:max-w-[78%] min-w-0 ${isMe ? 'self-end flex-row-reverse' : 'self-start'}`}
-            >
+            <React.Fragment key={msg.id || i}>
+              {unreadDividerNode}
+              <div
+                className={`flex items-start gap-2 max-w-[92%] md:max-w-[78%] min-w-0 ${isMe ? 'self-end flex-row-reverse' : 'self-start'}`}
+              >
               {!isMe && (
                 <UserAvatar
                   src={msgAvatarSrc}
@@ -150,6 +204,7 @@ export function ChatMessageList({
                 <div className={`text-[11px] mt-0.5 px-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>{msg.time}</div>
               </div>
             </div>
+            </React.Fragment>
           );
         }
 
@@ -169,8 +224,9 @@ export function ChatMessageList({
         const isStickerMsg = msg.type === 'sticker' && Boolean(msg.stickerMeta?.url);
 
         return (
+          <React.Fragment key={msg.id || i}>
+          {unreadDividerNode}
           <div
-            key={msg.id || i}
             data-testid={`chat-msg-${msg.id || i}`}
             className={`flex items-start gap-2 max-w-[92%] md:max-w-[78%] min-w-0 ${isMe ? 'self-end flex-row-reverse' : 'self-start'}`}
           >
@@ -677,10 +733,35 @@ export function ChatMessageList({
               </div>
             </div>
           </div>
+          </React.Fragment>
         );
       })}
-        <div ref={messagesEndRef} />
+          <div ref={endRef} />
+        </div>
       </div>
+
+      {showJumpToLatest && (
+        <button
+          type="button"
+          data-testid="chat-jump-to-latest-btn"
+          onClick={jumpToLatest}
+          className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold shadow-lg border transition-all cursor-pointer ${
+            unreadBelowCount > 0
+              ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500'
+              : isDark
+                ? 'bg-slate-800/95 hover:bg-slate-700 text-slate-100 border-slate-600'
+                : 'bg-white/95 hover:bg-gray-50 text-gray-800 border-gray-300'
+          }`}
+        >
+          <ArrowDown size={14} />
+          <span>
+            {unreadBelowCount > 0
+              ? `ข้อความใหม่ ${unreadBelowCount} รายการ · ไปล่าสุด`
+              : 'ไปข้อความล่าสุด'}
+          </span>
+        </button>
+      )}
+
       <StickerZoomModal sticker={zoomedSticker || null} onClose={() => setZoomedSticker(null)} />
     </div>
   );

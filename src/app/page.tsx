@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Globe, Image as ImageIcon, Lock, MessageSquare, Moon, Share2, Shield, Sun, X } from "lucide-react";
 import type { ChatAttachment } from "@/types/chat";
@@ -82,10 +82,6 @@ export default function ChatApp() {
     canUseMicContext: chat.canUseMicContext,
     showToast,
   });
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat.messages, chat.webrtc.transfers]);
 
   const mentionMatch = actions.inputText.match(/(?:^|\s)@([^\s@]{0,24})$/);
   const mentionQuery = mentionMatch ? mentionMatch[1].toLowerCase() : null;
@@ -379,6 +375,9 @@ export default function ChatApp() {
                 onOpenPreviewFile={setPreviewFile}
                 onOpenEditHistory={setEditHistoryModal}
                 messagesEndRef={messagesEndRef}
+                hasMoreOlder={chat.messagesHasMore}
+                loadingOlder={chat.loadingOlderMessages}
+                onLoadOlder={chat.loadOlderMessages}
               />
             </div>
 

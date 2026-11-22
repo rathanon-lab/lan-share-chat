@@ -92,6 +92,15 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const peersRef = useRef<PeerInfo[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesHasMore, setMessagesHasMore] = useState(false);
+  const [messagesOldestId, setMessagesOldestId] = useState<number | null>(null);
+  const [messagesTotalCount, setMessagesTotalCount] = useState(0);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const oldestIdRef = useRef<number | null>(null);
+  const hasMoreRef = useRef(false);
+  const incomingQueueRef = useRef<ChatMessage[]>([]);
+  const incomingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stickerPacks, setStickerPacks] = useState<StickerPack[]>([]);
 
   const showToastRef = useRef(showToast);
@@ -318,14 +327,60 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
       );
     });
 
-    newSocket.on("chat_reset", () => setMessages([]));
-    newSocket.on("chat_history", (history: ChatMessage[]) => setMessages(history));
+    newSocket.on("chat_reset", () => {
+      incomingQueueRef.current = [];
+      setMessages([]);
+      setMessagesHasMore(false);
+      hasMoreRef.current = false;
+      setMessagesOldestId(null);
+      oldestIdRef.current = null;
+      setMessagesTotalCount(0);
+    });
+    newSocket.on("chat_history", (history: ChatMessage[]) => {
+      incomingQueueRef.current = [];
+      setMessages(history);
+      const firstId = history.length > 0 ? Number(history[0]?.id || 0) : 0;
+      if (firstId > 0 && oldestIdRef.current === null) {
+        oldestIdRef.current = firstId;
+        setMessagesOldestId(firstId);
+      }
+    });
+    newSocket.on(
+      "chat_history_meta",
+      (meta: { hasMore?: boolean; oldestId?: number | null; totalCount?: number }) => {
+        const hm = Boolean(meta?.hasMore);
+        const oid = typeof meta?.oldestId === "number" ? meta.oldestId : null;
+        hasMoreRef.current = hm;
+        oldestIdRef.current = oid;
+        setMessagesHasMore(hm);
+        setMessagesOldestId(oid);
+        if (typeof meta?.totalCount === "number") setMessagesTotalCount(meta.totalCount);
+      }
+    );
     newSocket.on("peers_update", (updatedPeers: PeerInfo[]) => {
       setPeers(updatedPeers);
       peersRef.current = updatedPeers;
     });
     newSocket.on("receive_message", (msg: ChatMessage) => {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      incomingQueueRef.current.push(msg);
+      if (!incomingFlushTimerRef.current) {
+        incomingFlushTimerRef.current = setTimeout(() => {
+          incomingFlushTimerRef.current = null;
+          const batch = incomingQueueRef.current.splice(0);
+          if (batch.length === 0) return;
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const uniqueNew = batch.filter((m) => {
+              if (seen.has(m.id)) return false;
+              seen.add(m.id);
+              return true;
+            });
+            if (uniqueNew.length === 0) return prev;
+            return [...prev, ...uniqueNew];
+          });
+          setMessagesTotalCount((c) => c + batch.length);
+        }, 120);
+      }
     });
 
     newSocket.on("messages_read", ({ upToId, readAt }: { upToId: number; readAt: number }) => {
@@ -420,6 +475,10 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
 
     return () => {
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (incomingFlushTimerRef.current) {
+        clearTimeout(incomingFlushTimerRef.current);
+        incomingFlushTimerRef.current = null;
+      }
       newSocket.disconnect();
       webrtcHandlersRef.current.closeAllConnections();
       if (idleTimer) clearTimeout(idleTimer);
@@ -472,6 +531,43 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
     [identity.deviceId, socket]
   );
 
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreRef.current) return;
+    const beforeId = oldestIdRef.current;
+    if (!beforeId || beforeId <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlderMessages(true);
+    try {
+      const res = await fetch(`/api/messages/page?limit=60&beforeId=${beforeId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const older: ChatMessage[] = Array.isArray(data?.messages) ? data.messages : [];
+      const nextHasMore = Boolean(data?.hasMore);
+      const nextOldest = typeof data?.oldestId === "number" ? data.oldestId : null;
+      hasMoreRef.current = nextHasMore;
+      setMessagesHasMore(nextHasMore);
+      if (nextOldest !== null) {
+        oldestIdRef.current = nextOldest;
+        setMessagesOldestId(nextOldest);
+      }
+      if (typeof data?.totalCount === "number") {
+        setMessagesTotalCount(data.totalCount);
+      }
+      if (older.length > 0) {
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const uniqueOlder = older.filter((m) => !existingIds.has(m.id));
+          return uniqueOlder.length > 0 ? [...uniqueOlder, ...prev] : prev;
+        });
+      }
+    } catch {
+      // ignore transient network errors on reverse scroll
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlderMessages(false);
+    }
+  }, []);
+
   const reclaimSession = useCallback(() => {
     window.location.reload();
   }, []);
@@ -489,6 +585,11 @@ export function useChatSocket(showToast: (text: string, type?: "info" | "error" 
     nowMs,
     peers,
     messages,
+    messagesHasMore,
+    messagesOldestId,
+    messagesTotalCount,
+    loadingOlderMessages,
+    loadOlderMessages,
     stickerPacks,
     webrtc,
     handleSaveProfile,

@@ -11,7 +11,6 @@ import {
   uploadsDir,
 } from '../config';
 import {
-  checkClientRestriction,
   getSystemSettings,
   incrementTelemetryCounter,
   logActivity,
@@ -36,7 +35,7 @@ import {
   resolveClientIp,
   saveAndBroadcastMessage,
 } from '../state';
-import { enforceChatGuard } from '../security';
+import { enforceChatGuard, precheckChatWriteGate } from '../security';
 import { getOrCreateCompatPreviewVideo, getOrCreateMediaThumbnail } from '../utils/ffmpegCompat';
 
 export function resolveMediaFilePath(storedName: string): string | null {
@@ -256,13 +255,10 @@ export async function processMultiUpload(
   opts: { senderName: string; deviceId: string; clientIp: string; isAdmin: number; logAction: string }
 ): Promise<boolean> {
   if (!opts.isAdmin) {
-    const guard = await enforceChatGuard({
-      deviceId: opts.deviceId,
-      ip: opts.clientIp,
-      senderName: opts.senderName,
-    });
-    if (!guard.allowed) {
-      jsonErr(res, guard.code === 'RATE_LIMIT' ? 429 : 403, guard.message || 'Upload blocked');
+    const pre = await precheckChatWriteGate(opts.deviceId, opts.clientIp);
+    if (!pre.allowed) {
+      const code = pre.code === 'CHAT_LOCKED' ? 423 : pre.code === 'RATE_LIMIT' ? 429 : 403;
+      jsonErr(res, code, pre.message || 'Upload blocked');
       return true;
     }
   }
@@ -324,6 +320,26 @@ export async function processMultiUpload(
         // @ts-expect-error Multer attaches req.body
         caption = req.body && req.body.caption ? String(req.body.caption).trim() : '';
       } catch {}
+
+      if (!opts.isAdmin) {
+        const guard = await enforceChatGuard({
+          deviceId: opts.deviceId,
+          ip: opts.clientIp,
+          senderName: opts.senderName,
+          text: caption,
+          uploadFileCount: uploadedFiles.length,
+        });
+        if (!guard.allowed) {
+          for (const f of uploadedFiles) {
+            try {
+              if (f.path && fs.existsSync(f.path)) fs.unlinkSync(f.path);
+            } catch {}
+          }
+          const code = guard.code === 'CHAT_LOCKED' ? 423 : guard.code === 'RATE_LIMIT' ? 429 : 403;
+          if (!res.headersSent) jsonErr(res, code, guard.message || 'Upload blocked');
+          return finish(true);
+        }
+      }
 
       try {
         const attachments: Array<{
@@ -480,14 +496,10 @@ export async function handleChunkUpload(req: IncomingMessage, res: ServerRespons
     if (!isAuthorizedAdminToken(adminToken)) {
       const clientIp = resolveClientIp(req);
       const deviceId = String(req.headers['x-device-id'] || '').trim();
-      const settings = await getSystemSettings();
-      if (settings.chatLocked) {
-        jsonErr(res, 423, 'ขณะนี้ Admin ปิดการส่งชั่วคราวเพื่อตรวจสอบระบบ');
-        return;
-      }
-      const restriction = await checkClientRestriction(deviceId, clientIp);
-      if (restriction.isBanned || restriction.isMuted) {
-        jsonErr(res, 403, restriction.reason || 'อุปกรณ์ของคุณถูกระงับการส่งชั่วคราว');
+      const pre = await precheckChatWriteGate(deviceId, clientIp);
+      if (!pre.allowed) {
+        const code = pre.code === 'CHAT_LOCKED' ? 423 : pre.code === 'RATE_LIMIT' ? 429 : 403;
+        jsonErr(res, code, pre.message || 'อุปกรณ์ของคุณถูกระงับการส่งชั่วคราว');
         return;
       }
     }
@@ -595,9 +607,11 @@ export async function handleChunkComplete(req: IncomingMessage, res: ServerRespo
       ip: clientIp,
       senderName,
       text: body.caption ? String(body.caption).trim() : '',
+      uploadFileCount: uploadIds.length,
     });
     if (!guard.allowed) {
-      jsonErr(res, guard.code === 'RATE_LIMIT' ? 429 : 403, guard.message || 'Upload blocked');
+      const code = guard.code === 'CHAT_LOCKED' ? 423 : guard.code === 'RATE_LIMIT' ? 429 : 403;
+      jsonErr(res, code, guard.message || 'Upload blocked');
       return;
     }
   }

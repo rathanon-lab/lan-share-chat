@@ -12,19 +12,25 @@ import {
   deleteMessage,
   deleteMessagesBatch,
   deleteMessagesByDevice,
+  deleteMessagesByFilter,
   deleteUploadedFile,
   deleteUploadedFilesBatch,
+  detectSuspectedBotSenders,
   getAdminOverviewStats,
   getAllMessages,
   getAllUploadedFiles,
   getBannedIps,
+  getMessageSendersSummary,
+  getMessagesPage,
   getRecentLogs,
   getSystemSettings,
   logActivity,
   markAttachmentsDeletedInMessages,
+  previewMessagesByFilter,
   resetSystemSettings,
   sanitizeMessageForClient,
   saveMessage,
+  setDeviceBan,
   updateSystemSettings,
 } from '../../src/lib/db';
 import {
@@ -148,6 +154,19 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   if (await handleAdminModerationRoutes(req, res, pathname, clientIp)) return true;
 
   if (pathname === '/api/admin/messages' && req.method === 'GET') {
+    const urlObj = new URL(req.url || pathname, 'http://localhost');
+    const limitRaw = urlObj.searchParams.get('limit');
+    const beforeRaw = urlObj.searchParams.get('beforeId');
+    const searchRaw = urlObj.searchParams.get('search') || '';
+    if (limitRaw || beforeRaw || searchRaw) {
+      const page = await getMessagesPage({
+        limit: limitRaw ? parseInt(limitRaw, 10) : 60,
+        beforeId: beforeRaw ? parseInt(beforeRaw, 10) : null,
+        search: searchRaw,
+        includeDeletedAudit: true,
+      });
+      return jsonOk(res, page), true;
+    }
     return jsonOk(res, await getAllMessages({ includeDeletedAudit: true })), true;
   }
 
@@ -188,6 +207,76 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       if (ioRef) ioRef.emit('messages_batch_deleted', { ids: deletedIds });
     }
     return jsonOk(res, { success: true, deletedIds }), true;
+  }
+
+  if (pathname === '/api/admin/messages/senders' && req.method === 'GET') {
+    const senders = await getMessageSendersSummary();
+    return jsonOk(res, { senders }), true;
+  }
+
+  if (pathname === '/api/admin/messages/bot-suspects' && req.method === 'GET') {
+    const report = await detectSuspectedBotSenders(72);
+    return jsonOk(res, report), true;
+  }
+
+  if (pathname === '/api/admin/messages/purge-range' && req.method === 'POST') {
+    const body = await parseJsonBody(req);
+    const startMs = typeof body.startMs === 'number' && Number.isFinite(body.startMs) ? body.startMs : undefined;
+    const endMs = typeof body.endMs === 'number' && Number.isFinite(body.endMs) ? body.endMs : undefined;
+    const deviceIds = Array.isArray(body.deviceIds)
+      ? body.deviceIds.map((d: unknown) => String(d || '').trim()).filter(Boolean)
+      : undefined;
+    const excludeAdmin = body.excludeAdmin !== false;
+    const dryRun = Boolean(body.dryRun);
+
+    if (dryRun) {
+      const preview = await previewMessagesByFilter({ startMs, endMs, deviceIds, excludeAdmin });
+      return jsonOk(res, { dryRun: true, ...preview }), true;
+    }
+
+    const deletedIds = await deleteMessagesByFilter({ startMs, endMs, deviceIds, excludeAdmin });
+    if (deletedIds.length > 0) {
+      logActivity(
+        'PURGE_RANGE_MESSAGES',
+        'admin',
+        clientIp,
+        JSON.stringify({ startMs, endMs, deviceCount: deviceIds?.length || 0, excludeAdmin, count: deletedIds.length })
+      ).catch(() => {});
+      if (ioRef) ioRef.emit('messages_batch_deleted', { ids: deletedIds });
+    }
+    return jsonOk(res, { success: true, deletedIds, deletedCount: deletedIds.length }), true;
+  }
+
+  if (pathname === '/api/admin/messages/purge-bots' && req.method === 'POST') {
+    const body = await parseJsonBody(req);
+    const deviceIds: string[] = Array.isArray(body.deviceIds)
+      ? Array.from(new Set(body.deviceIds.map((d: unknown) => String(d || '').trim()).filter(Boolean)))
+      : [];
+    if (deviceIds.length === 0) {
+      return jsonErr(res, 400, 'กรุณาเลือกอย่างน้อย 1 อุปกรณ์บอท/สแปม'), true;
+    }
+    const deletedIds = await deleteMessagesByFilter({ deviceIds, excludeAdmin: true });
+    if (Boolean(body.alsoBan)) {
+      for (const devId of deviceIds) {
+        await setDeviceBan(devId, true, 'Auto-Ban Bot/Spam Purge by Admin').catch(() => {});
+        if (ioRef) ioRef.emit('device_status_changed', { deviceId: devId, status: 'banned' });
+      }
+    }
+    if (deletedIds.length > 0) {
+      logActivity(
+        'PURGE_BOT_MESSAGES',
+        'admin',
+        clientIp,
+        JSON.stringify({ deviceIds, alsoBan: Boolean(body.alsoBan), count: deletedIds.length })
+      ).catch(() => {});
+      if (ioRef) ioRef.emit('messages_batch_deleted', { ids: deletedIds });
+    }
+    return jsonOk(res, {
+      success: true,
+      deletedIds,
+      deletedCount: deletedIds.length,
+      devicesAffected: deviceIds.length,
+    }), true;
   }
 
   if (pathname === '/api/admin/files' && req.method === 'GET') {
@@ -267,9 +356,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       maxConcurrentUsers: typeof body.maxConcurrentUsers === 'number' ? body.maxConcurrentUsers : undefined,
       stickerPreviewMode: body.stickerPreviewMode,
       stickerCollageEnabled: typeof body.stickerCollageEnabled === 'boolean' ? body.stickerCollageEnabled : undefined,
+      stickerPickerGifMode: body.stickerPickerGifMode,
     });
     if (ioRef) ioRef.emit('settings_update', nextSettings);
-    await logActivity('UPDATE_SETTINGS', 'admin', clientIp, JSON.stringify(nextSettings));
+    // Non-blocking audit write to Data Plane DB so Control Plane response never blocks on chat spam writes
+    logActivity('UPDATE_SETTINGS', 'admin', clientIp, JSON.stringify(nextSettings)).catch(() => {});
     return jsonOk(res, nextSettings), true;
   }
 

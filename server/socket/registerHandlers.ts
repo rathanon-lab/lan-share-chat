@@ -3,8 +3,8 @@ import { Server as SocketIOServer } from 'socket.io';
 import {
   checkClientRestriction,
   findExistingDeviceByIpAndOs,
-  getAllMessages,
   getDeviceProfile,
+  getMessagesPage,
   getStickerPacksWithItems,
   getSystemSettings,
   isDeviceDeleted,
@@ -213,11 +213,16 @@ export function registerSocketHandlers(io: SocketIOServer) {
       socketId: socket.id,
     });
 
-    const [history, stickerPacks] = await Promise.all([
-      getAllMessages(),
+    const [historyPage, stickerPacks] = await Promise.all([
+      getMessagesPage({ limit: 80, includeDeletedAudit: false }),
       getStickerPacksWithItems({ onlyEnabled: true }),
     ]);
-    socket.emit('chat_history', history);
+    socket.emit('chat_history', historyPage.messages);
+    socket.emit('chat_history_meta', {
+      hasMore: historyPage.hasMore,
+      oldestId: historyPage.oldestId,
+      totalCount: historyPage.totalCount,
+    });
     socket.emit('settings_update', settings);
     socket.emit('sticker_packs_update', stickerPacks);
 

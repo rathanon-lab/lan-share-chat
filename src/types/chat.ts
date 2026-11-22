@@ -24,6 +24,7 @@ export interface ChatAttachment {
 }
 
 export type StickerPreviewMode = 'fullscreen_modal' | 'docked_tray';
+export type StickerPickerGifMode = 'live_viewport' | 'static_poster';
 
 export interface StickerCollageLayer {
   packId: string;
@@ -129,6 +130,7 @@ export interface SystemSettings {
   maxConcurrentUsers?: number;
   stickerPreviewMode?: StickerPreviewMode;
   stickerCollageEnabled?: boolean;
+  stickerPickerGifMode?: StickerPickerGifMode;
 }
 
 export interface TelemetryDailyRow {

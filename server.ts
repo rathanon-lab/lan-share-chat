@@ -126,7 +126,7 @@ app
 
       const runtimeInfo = detectRuntimeEnvironment();
       console.log('====================================================================');
-      console.log(`> LAN Share Chat v3.0 [${modeLabel}]`);
+      console.log(`> LAN Share Chat v3.2.0 [${modeLabel}]`);
       console.log(`> Runtime Mode : ${runtimeInfo.platformLabel} (Node ${runtimeInfo.nodeVersion})`);
       console.log(`> Local HTTP   : http://localhost:${port}`);
       console.log(`> LAN HTTP     : http://${publicHost}:${port}`);

@@ -15,6 +15,7 @@ import {
   SecureAudio,
 } from './secureMedia';
 import { CustomVideoPlayer } from '@/features/chat/components/CustomVideoPlayer';
+import { PreviewFilmstripBar } from './PreviewFilmstripBar';
 
 export type PreviewKind =
   | 'image'
@@ -378,56 +379,137 @@ function DocumentTextViewer({
 
 export function UniversalFilePreviewModal({
   file,
+  gallery,
+  currentIndex,
+  onNavigate,
   onClose,
 }: {
   file: PreviewableFile;
+  gallery?: PreviewableFile[];
+  currentIndex?: number;
+  onNavigate?: (index: number) => void;
   onClose: () => void;
 }) {
-  const kind = getFilePreviewKind(file.fileName, file.mimeType);
+  const hasGallery = Boolean(Array.isArray(gallery) && gallery.length > 1 && onNavigate);
+  const resolvedIndex = hasGallery
+    ? Math.max(
+        0,
+        Math.min(
+          gallery!.length - 1,
+          typeof currentIndex === 'number' && currentIndex >= 0
+            ? currentIndex
+            : Math.max(0, gallery!.findIndex((g) => g.mediaToken === file.mediaToken))
+        )
+      )
+    : 0;
+  const activeFile = hasGallery ? gallery![resolvedIndex] || file : file;
+  const kind = getFilePreviewKind(activeFile.fileName, activeFile.mimeType);
+  const canPrev = hasGallery && resolvedIndex > 0;
+  const canNext = hasGallery && resolvedIndex < gallery!.length - 1;
+
+  const [filmstripExpanded, setFilmstripExpanded] = useState(true);
   const [imgRotState, setImgRotState] = useState<{ token: string; deg: 0 | 90 | 180 | 270 }>({
-    token: file.mediaToken,
+    token: activeFile.mediaToken,
     deg: 0,
   });
-  const imageRotation = imgRotState.token === file.mediaToken ? imgRotState.deg : 0;
+  const imageRotation = imgRotState.token === activeFile.mediaToken ? imgRotState.deg : 0;
   const isQuarterTurn = imageRotation === 90 || imageRotation === 270;
 
   const rotatePreviewImage = () => {
     setImgRotState((prev) => {
-      const cur = prev.token === file.mediaToken ? prev.deg : 0;
+      const cur = prev.token === activeFile.mediaToken ? prev.deg : 0;
       const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
-      return { token: file.mediaToken, deg: next };
+      return { token: activeFile.mediaToken, deg: next };
     });
   };
 
   useEffect(() => {
-    if (kind !== 'image') return;
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-      if (e.key === 'r' || e.key === 'R') {
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (hasGallery && onNavigate) {
+        if (e.key === 'ArrowLeft' && resolvedIndex > 0) {
+          e.preventDefault();
+          onNavigate(resolvedIndex - 1);
+          return;
+        }
+        if (e.key === 'ArrowRight' && resolvedIndex < gallery!.length - 1) {
+          e.preventDefault();
+          onNavigate(resolvedIndex + 1);
+          return;
+        }
+      }
+      if (kind === 'image' && (e.key === 'r' || e.key === 'R')) {
         e.preventDefault();
         setImgRotState((prev) => {
-          const cur = prev.token === file.mediaToken ? prev.deg : 0;
+          const cur = prev.token === activeFile.mediaToken ? prev.deg : 0;
           const next = (((cur + 90) % 360) as 0 | 90 | 180 | 270);
-          return { token: file.mediaToken, deg: next };
+          return { token: activeFile.mediaToken, deg: next };
         });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [kind, file.mediaToken]);
+  }, [kind, activeFile.mediaToken, hasGallery, onNavigate, resolvedIndex, gallery, onClose]);
 
   return (
     <div
-      className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6"
+      className="fixed inset-0 z-[80] bg-black/78 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6"
       onClick={onClose}
       data-testid="file-preview-modal"
     >
+      {/* Floating Side Prev / Next Arrows (#1 Gallery Controls) */}
+      {hasGallery && (
+        <>
+          <button
+            type="button"
+            data-testid="preview-gallery-prev"
+            disabled={!canPrev}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canPrev) onNavigate!(resolvedIndex - 1);
+            }}
+            title="ก่อนหน้า (←)"
+            aria-label="รายการก่อนหน้า"
+            className={`fixed left-2 sm:left-5 top-1/2 -translate-y-1/2 z-[85] w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center border shadow-xl transition-all ${
+              canPrev
+                ? 'bg-slate-900/80 hover:bg-blue-600 text-white border-white/20 cursor-pointer hover:scale-105'
+                : 'bg-slate-900/30 text-white/30 border-white/10 cursor-not-allowed'
+            }`}
+          >
+            <ChevronLeft size={26} />
+          </button>
+          <button
+            type="button"
+            data-testid="preview-gallery-next"
+            disabled={!canNext}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canNext) onNavigate!(resolvedIndex + 1);
+            }}
+            title="ถัดไป (→)"
+            aria-label="รายการถัดไป"
+            className={`fixed right-2 sm:right-5 top-1/2 -translate-y-1/2 z-[85] w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center border shadow-xl transition-all ${
+              canNext
+                ? 'bg-slate-900/80 hover:bg-blue-600 text-white border-white/20 cursor-pointer hover:scale-105'
+                : 'bg-slate-900/30 text-white/30 border-white/10 cursor-not-allowed'
+            }`}
+          >
+            <ChevronRight size={26} />
+          </button>
+        </>
+      )}
+
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-gray-50">
+        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3 bg-gray-50 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
               {kind === 'zip' ? (
@@ -441,13 +523,18 @@ export function UniversalFilePreviewModal({
               )}
             </span>
             <div className="min-w-0">
-              <div className="font-bold text-sm text-gray-900 truncate" title={file.fileName}>
-                {file.fileName}
+              <div className="font-bold text-sm text-gray-900 truncate" title={activeFile.fileName}>
+                {activeFile.fileName}
               </div>
               <div className="text-[11px] text-gray-500 flex items-center gap-2">
                 <span className="uppercase font-semibold">{kind.replace('_', ' ')}</span>
-                {typeof file.fileSize === 'number' && file.fileSize > 0 && (
-                  <span>• {(file.fileSize / 1024).toFixed(1)} KB</span>
+                {typeof activeFile.fileSize === 'number' && activeFile.fileSize > 0 && (
+                  <span>• {(activeFile.fileSize / 1024).toFixed(1)} KB</span>
+                )}
+                {hasGallery && (
+                  <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 font-bold">
+                    {resolvedIndex + 1} / {gallery!.length}
+                  </span>
                 )}
               </div>
             </div>
@@ -472,15 +559,15 @@ export function UniversalFilePreviewModal({
             )}
             <button
               type="button"
-              onClick={() => downloadEncryptedMedia(file.mediaToken, file.fileName)}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5"
+              onClick={() => downloadEncryptedMedia(activeFile.mediaToken, activeFile.fileName)}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <Download size={14} /> ดาวน์โหลด
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500"
+              className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500 cursor-pointer"
               aria-label="ปิดหน้าต่างพรีวิว"
             >
               <X size={18} />
@@ -488,39 +575,44 @@ export function UniversalFilePreviewModal({
           </div>
         </div>
 
-        <div className="p-4 overflow-y-auto flex-1 flex flex-col items-center justify-start bg-gray-50/40">
+        <div className="p-4 overflow-y-auto flex-1 min-h-0 flex flex-col items-center justify-start bg-gray-50/40">
           {kind === 'image' && (
             <div
               data-testid="preview-image-stage"
               data-rotation={imageRotation}
-              className="w-full min-h-[320px] flex-1 flex items-center justify-center overflow-hidden my-auto"
+              className="w-full min-h-[280px] flex-1 flex items-center justify-center overflow-hidden my-auto"
             >
               <SecureImage
-                token={file.mediaToken}
-                alt={file.fileName}
-                fileName={file.fileName}
+                key={activeFile.mediaToken}
+                token={activeFile.mediaToken}
+                alt={activeFile.fileName}
+                fileName={activeFile.fileName}
                 style={{
                   transform: imageRotation ? `rotate(${imageRotation}deg)` : undefined,
                   transition: 'transform 160ms ease-out',
                 }}
                 className={`${
-                  isQuarterTurn ? 'max-w-[64vh] max-h-[75vw]' : 'max-h-[72vh] max-w-full'
+                  isQuarterTurn
+                    ? 'max-w-[58vh] max-h-[72vw]'
+                    : hasGallery && filmstripExpanded
+                      ? 'max-h-[60vh] max-w-full'
+                      : 'max-h-[72vh] max-w-full'
                 } rounded-xl object-contain shadow`}
               />
             </div>
           )}
           {kind === 'video' && (
-            <CustomVideoPlayer token={file.mediaToken} autoPlay className="my-auto" />
+            <CustomVideoPlayer key={activeFile.mediaToken} token={activeFile.mediaToken} autoPlay className="my-auto" />
           )}
           {kind === 'audio' && (
             <div className="w-full max-w-md bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-sm my-auto">
-              <div className="text-sm font-semibold text-gray-800 mb-3">{file.fileName}</div>
-              <SecureAudio token={file.mediaToken} className="w-full" />
+              <div className="text-sm font-semibold text-gray-800 mb-3">{activeFile.fileName}</div>
+              <SecureAudio key={activeFile.mediaToken} token={activeFile.mediaToken} className="w-full" />
             </div>
           )}
-          {kind === 'pdf' && <PdfCanvasViewer token={file.mediaToken} fileName={file.fileName} />}
+          {kind === 'pdf' && <PdfCanvasViewer key={activeFile.mediaToken} token={activeFile.mediaToken} fileName={activeFile.fileName} />}
           {(kind === 'markdown' || kind === 'docx' || kind === 'blocked_code' || kind === 'text') && (
-            <DocumentTextViewer token={file.mediaToken} fileName={file.fileName} kind={kind} />
+            <DocumentTextViewer key={activeFile.mediaToken} token={activeFile.mediaToken} fileName={activeFile.fileName} kind={kind} />
           )}
           {(kind === 'unsupported' || kind === 'zip') && (
             <div className="py-10 text-center text-gray-500 my-auto">
@@ -534,6 +626,17 @@ export function UniversalFilePreviewModal({
             </div>
           )}
         </div>
+
+        {/* Collapsible macOS Finder Gallery-Style Filmstrip (#2) */}
+        {hasGallery && (
+          <PreviewFilmstripBar
+            gallery={gallery!}
+            currentIndex={resolvedIndex}
+            expanded={filmstripExpanded}
+            onToggleExpanded={() => setFilmstripExpanded((v) => !v)}
+            onSelectIndex={(idx) => onNavigate!(idx)}
+          />
+        )}
       </div>
     </div>
   );

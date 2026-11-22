@@ -14,6 +14,80 @@ const goneMediaTokens = new Set<string>();
 const mediaResolvedListeners = new Map<string, Set<() => void>>();
 let cachedVideoTranscodeAvail: boolean | null = null;
 
+/**
+ * Auto-Dynamic Browser LRU Media Cache Cap.
+ * Computes safe in-memory Blob URL limits per client device without hardcoding,
+ * preventing iPad/iOS WebKit tab OOM crashes while allowing high-RAM PCs to cache generously.
+ */
+function computeDynamicMediaCacheCap(): { blobCap: number; thumbCap: number } {
+  if (typeof navigator === 'undefined') return { blobCap: 64, thumbCap: 120 };
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  if (isIOS) {
+    return { blobCap: 24, thumbCap: 48 };
+  }
+  const navAny = navigator as Navigator & { deviceMemory?: number };
+  const devMemGb = typeof navAny.deviceMemory === 'number' && navAny.deviceMemory > 0 ? navAny.deviceMemory : 0;
+  const cores = navigator.hardwareConcurrency || 4;
+  if (devMemGb >= 8 || (!devMemGb && cores >= 8)) {
+    return { blobCap: 96, thumbCap: 180 };
+  }
+  if (devMemGb >= 4 || (!devMemGb && cores >= 4)) {
+    return { blobCap: 48, thumbCap: 96 };
+  }
+  return { blobCap: 24, thumbCap: 48 };
+}
+
+const DYNAMIC_CACHE_CAPS = computeDynamicMediaCacheCap();
+
+function touchLruMap<V>(map: Map<string, V>, key: string): V | undefined {
+  if (!map.has(key)) return undefined;
+  const val = map.get(key)!;
+  map.delete(key);
+  map.set(key, val);
+  return val;
+}
+
+function setBlobLru(token: string, url: string, blob: Blob): void {
+  if (blobUrlCache.has(token)) {
+    blobUrlCache.delete(token);
+  }
+  blobUrlCache.set(token, url);
+  blobCache.delete(token);
+  blobCache.set(token, blob);
+
+  while (blobUrlCache.size > DYNAMIC_CACHE_CAPS.blobCap) {
+    const oldestKey = blobUrlCache.keys().next().value;
+    if (!oldestKey || oldestKey === token) break;
+    const oldUrl = blobUrlCache.get(oldestKey);
+    if (oldUrl) {
+      try {
+        URL.revokeObjectURL(oldUrl);
+      } catch {}
+    }
+    blobUrlCache.delete(oldestKey);
+    blobCache.delete(oldestKey);
+  }
+}
+
+function setThumbLru(token: string, url: string | null): void {
+  if (thumbUrlCache.has(token)) {
+    thumbUrlCache.delete(token);
+  }
+  thumbUrlCache.set(token, url);
+  while (thumbUrlCache.size > DYNAMIC_CACHE_CAPS.thumbCap) {
+    const oldestKey = thumbUrlCache.keys().next().value;
+    if (!oldestKey || oldestKey === token) break;
+    const oldUrl = thumbUrlCache.get(oldestKey);
+    if (oldUrl) {
+      try {
+        URL.revokeObjectURL(oldUrl);
+      } catch {}
+    }
+    thumbUrlCache.delete(oldestKey);
+  }
+}
+
 export class MediaGoneError extends Error {
   readonly status: number;
   constructor(status = 410, message = 'Media file has been deleted') {
@@ -119,31 +193,31 @@ export function subscribeMediaResolved(token: string, cb: () => void): () => voi
   };
 }
 
-function useInViewport(rootMargin = '280px'): { ref: React.RefObject<HTMLDivElement | null>; inView: boolean } {
+export function useVisibilityInViewport(
+  rootMargin = '280px',
+  rootElement?: Element | null,
+  enabled = true
+): { ref: React.RefObject<HTMLDivElement | null>; inView: boolean } {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [inView, setInView] = useState<boolean>(() => typeof IntersectionObserver === 'undefined');
+  const [inView, setInView] = useState<boolean>(() => !enabled || typeof IntersectionObserver === 'undefined');
 
   useEffect(() => {
-    if (inView) return;
+    if (!enabled) return;
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setInView(true);
-            observer.disconnect();
-            break;
-          }
+          setInView(entry.isIntersecting);
         }
       },
-      { rootMargin }
+      { root: rootElement ?? null, rootMargin }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [inView, rootMargin]);
+  }, [rootMargin, rootElement, enabled]);
 
-  return { ref, inView };
+  return { ref, inView: enabled ? inView : true };
 }
 
 export async function getVideoTranscodeAvailable(): Promise<boolean> {
@@ -244,9 +318,8 @@ export async function fetchEncryptedMediaBlobUrl(
       }
     }
 
-    blobCache.set(token, blob);
     const objectUrl = URL.createObjectURL(blob);
-    blobUrlCache.set(token, objectUrl);
+    setBlobLru(token, objectUrl, blob);
     inFlightRequests.delete(token);
     notifyMediaResolved(token);
     return objectUrl;
@@ -273,7 +346,7 @@ export async function fetchEncryptedThumbnailUrl(
     throw new MediaGoneError(410);
   }
   if (thumbUrlCache.has(token)) {
-    return thumbUrlCache.get(token) ?? null;
+    return touchLruMap(thumbUrlCache, token) ?? null;
   }
   if (inFlightThumbs.has(token)) {
     return inFlightThumbs.get(token)!;
@@ -287,7 +360,7 @@ export async function fetchEncryptedThumbnailUrl(
       body: JSON.stringify({ token }),
     });
     if (res.status === 204) {
-      thumbUrlCache.set(token, null);
+      setThumbLru(token, null);
       inFlightThumbs.delete(token);
       return null;
     }
@@ -300,12 +373,12 @@ export async function fetchEncryptedThumbnailUrl(
     }
     const blob = await res.blob();
     if (blob.size === 0) {
-      thumbUrlCache.set(token, null);
+      setThumbLru(token, null);
       inFlightThumbs.delete(token);
       return null;
     }
     const objectUrl = URL.createObjectURL(blob);
-    thumbUrlCache.set(token, objectUrl);
+    setThumbLru(token, objectUrl);
     inFlightThumbs.delete(token);
     notifyMediaResolved(token);
     return objectUrl;
@@ -439,14 +512,20 @@ export function SecureImage({
   onClick?: () => void;
   thumbnail?: boolean;
 }) {
-  const { ref, inView } = useInViewport('280px');
-  const cachedUrl = (thumbnail ? thumbUrlCache.get(token) : null) || blobUrlCache.get(token) || null;
+  // Only gate feed/grid thumbnails with bidirectional viewport observer; full-size modal images stay mounted
+  const { ref, inView } = useVisibilityInViewport('420px', null, thumbnail);
+  const lastHeightRef = useRef<number>(0);
+  const cachedUrl =
+    (thumbnail ? touchLruMap(thumbUrlCache, token) : null) || touchLruMap(blobUrlCache, token) || null;
   const [blobUrl, setBlobUrl] = useState<string | null>(cachedUrl);
   const [gone, setGone] = useState<boolean>(() => goneMediaTokens.has(token));
   const [error, setError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
   const isGone = gone || goneMediaTokens.has(token);
-  const effectiveUrl = isGone ? null : cachedUrl || blobUrl;
+  // Only trust live URLs still present in cache so evicted URLs re-fetch cleanly when scrolled back
+  const effectiveUrl = isGone
+    ? null
+    : cachedUrl || (blobUrl && (blobUrlCache.get(token) === blobUrl || thumbUrlCache.get(token) === blobUrl) ? blobUrl : null);
 
   useEffect(() => {
     if (!token) return;
@@ -496,66 +575,127 @@ export function SecureImage({
     };
   }, [token, cachedUrl, fileName, alt, thumbnail, inView, isGone, retryTick]);
 
-  if (isGone) {
-    return (
-      <div
-        ref={ref}
-        data-testid="media-deleted-placeholder"
-        className={`flex flex-col items-center justify-center bg-slate-100 text-slate-500 text-xs gap-1.5 p-3 rounded-xl text-center select-none min-h-[110px] ${className || ''}`}
-        style={style}
-      >
-        <ImageOff size={20} className="opacity-65 shrink-0" />
-        <span className="font-medium leading-tight">รูปภาพนี้ถูกลบแล้ว</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        ref={ref}
-        className={`flex items-center justify-center bg-gray-100 text-gray-500 text-xs gap-1.5 p-3 rounded-xl ${className || ''}`}
-        style={style}
-      >
-        <AlertCircle size={14} /> โหลดสื่อไม่สำเร็จ
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setError(false);
-            setRetryTick((n) => n + 1);
-          }}
-          title="ลองโหลดใหม่"
-          className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white border border-gray-300 text-[10px] text-gray-700 hover:bg-gray-50"
+  // Full-size modal / lightbox images render directly without viewport unmounting wrapper
+  if (!thumbnail) {
+    if (isGone) {
+      return (
+        <div
+          data-testid="media-deleted-placeholder"
+          className={`flex flex-col items-center justify-center bg-slate-100 text-slate-500 text-xs gap-1.5 p-3 rounded-xl text-center select-none min-h-[110px] ${className || ''}`}
+          style={style}
         >
-          <RefreshCw size={10} /> ลองใหม่
-        </button>
-      </div>
+          <ImageOff size={20} className="opacity-65 shrink-0" />
+          <span className="font-medium leading-tight">รูปภาพนี้ถูกลบแล้ว</span>
+        </div>
+      );
+    }
+    if (error) {
+      return (
+        <div
+          className={`flex items-center justify-center bg-gray-100 text-gray-500 text-xs gap-1.5 p-3 rounded-xl ${className || ''}`}
+          style={style}
+        >
+          <AlertCircle size={14} /> โหลดสื่อไม่สำเร็จ
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setError(false);
+              setRetryTick((n) => n + 1);
+            }}
+            title="ลองโหลดใหม่"
+            className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white border border-gray-300 text-[10px] text-gray-700 hover:bg-gray-50"
+          >
+            <RefreshCw size={10} /> ลองใหม่
+          </button>
+        </div>
+      );
+    }
+    if (!effectiveUrl) {
+      return (
+        <div
+          className={`flex items-center justify-center bg-black/10 animate-pulse rounded-xl min-h-[140px] min-w-[140px] ${className || ''}`}
+          style={style}
+        >
+          <Loader2 size={20} className="animate-spin opacity-60" />
+        </div>
+      );
+    }
+    return (
+      <img
+        src={effectiveUrl}
+        alt={alt || 'media'}
+        loading="lazy"
+        decoding="async"
+        className={className}
+        style={style}
+        onClick={onClick}
+      />
     );
   }
 
-  if (!effectiveUrl) {
-    return (
-      <div
-        ref={ref}
-        className={`flex items-center justify-center bg-black/10 animate-pulse rounded-xl min-h-[120px] ${className || ''}`}
-        style={style}
-      >
-        {inView && <Loader2 size={20} className="animate-spin opacity-60" />}
-      </div>
-    );
-  }
+  // Thumbnail / Feed Mode: ALWAYS keep ONE persistent real layout box (<div ref={ref}>)
+  // NEVER use display:contents on an IntersectionObserver target (causes 0x0 rect 60fps flicker!).
+  const placeholderMinHeight = lastHeightRef.current > 0 ? `${lastHeightRef.current}px` : undefined;
 
   return (
-    <img
-      src={effectiveUrl}
-      alt={alt || 'media'}
-      loading="lazy"
-      decoding="async"
-      className={className}
-      style={style}
-      onClick={onClick}
-    />
+    <div
+      ref={ref}
+      className="w-full h-full"
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        maxHeight: style?.maxHeight,
+      }}
+    >
+      {isGone ? (
+        <div
+          data-testid="media-deleted-placeholder"
+          className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-500 text-xs gap-1.5 p-3 rounded-xl text-center select-none"
+        >
+          <ImageOff size={20} className="opacity-65 shrink-0" />
+          <span className="font-medium leading-tight">รูปภาพนี้ถูกลบแล้ว</span>
+        </div>
+      ) : error ? (
+        <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-500 text-xs gap-1.5 p-3 rounded-xl">
+          <AlertCircle size={14} /> โหลดสื่อไม่สำเร็จ
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setError(false);
+              setRetryTick((n) => n + 1);
+            }}
+            title="ลองโหลดใหม่"
+            className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white border border-gray-300 text-[10px] text-gray-700 hover:bg-gray-50"
+          >
+            <RefreshCw size={10} /> ลองใหม่
+          </button>
+        </div>
+      ) : !effectiveUrl || !inView ? (
+        <div
+          className={`w-full h-full flex items-center justify-center bg-black/10 ${inView ? 'animate-pulse' : ''}`}
+          style={{ minHeight: placeholderMinHeight || (style?.maxHeight ? '140px' : undefined) }}
+        >
+          {inView && <Loader2 size={18} className="animate-spin opacity-60" />}
+        </div>
+      ) : (
+        <img
+          src={effectiveUrl}
+          alt={alt || 'media'}
+          loading="lazy"
+          decoding="async"
+          className={className}
+          style={style}
+          onClick={onClick}
+          onLoad={() => {
+            const h = ref.current?.getBoundingClientRect().height || 0;
+            if (h > 20) lastHeightRef.current = Math.round(h);
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -576,10 +716,10 @@ export function SecureVideo({
   muted?: boolean;
   onClick?: () => void;
 }) {
-  const { ref, inView } = useInViewport('280px');
   const isPosterMode = !controls;
+  const { ref, inView } = useVisibilityInViewport('360px', null, isPosterMode);
   const hasCachedThumb = isPosterMode && thumbUrlCache.has(token);
-  const cachedThumb = hasCachedThumb ? (thumbUrlCache.get(token) ?? null) : undefined;
+  const cachedThumb = hasCachedThumb ? (touchLruMap(thumbUrlCache, token) ?? null) : undefined;
   const cachedStream = !isPosterMode ? (streamUrlCache.get(token)?.url || null) : null;
 
   const [thumbUrl, setThumbUrl] = useState<string | null>(cachedThumb ?? null);
@@ -590,8 +730,9 @@ export function SecureVideo({
   const [retryTick, setRetryTick] = useState(0);
 
   const isGone = gone || goneMediaTokens.has(token);
-  const effectiveThumb = isGone ? null : cachedThumb !== undefined ? cachedThumb : thumbUrl;
-  const effectiveThumbLoaded = !isGone && (hasCachedThumb || thumbLoaded);
+  // Only trust live URLs still present in cache so LRU-evicted thumbnails re-fetch cleanly
+  const effectiveThumb = isGone ? null : hasCachedThumb ? (cachedThumb ?? null) : (thumbUrl && thumbUrlCache.get(token) === thumbUrl ? thumbUrl : null);
+  const effectiveThumbLoaded = !isGone && hasCachedThumb && (thumbLoaded || cachedThumb !== undefined);
   const effectiveSrcUrl = isGone ? null : cachedStream || srcUrl;
 
   useEffect(() => {
@@ -671,10 +812,59 @@ export function SecureVideo({
     };
   }, [token, isPosterMode, hasCachedThumb, inView, isGone, retryTick]);
 
+  // Grid / Feed Poster Mode: single persistent real-box wrapper (never display:contents!)
+  if (isPosterMode) {
+    return (
+      <div ref={ref} className="w-full h-full" onClick={onClick}>
+        {isGone ? (
+          <div
+            data-testid="media-deleted-placeholder"
+            className="w-full h-full flex flex-col items-center justify-center bg-slate-800/90 text-slate-300 text-xs gap-1.5 p-3 rounded-xl text-center select-none"
+          >
+            <VideoOff size={20} className="opacity-70 shrink-0" />
+            <span className="font-medium leading-tight">วิดีโอนี้ถูกลบแล้ว</span>
+          </div>
+        ) : error ? (
+          <div className="w-full h-full flex items-center justify-center bg-gray-900 text-gray-300 text-xs gap-1.5 p-3 rounded-xl">
+            <AlertCircle size={14} /> โหลดวิดีโอไม่สำเร็จ
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setError(false);
+                setRetryTick((n) => n + 1);
+              }}
+              title="ลองโหลดใหม่"
+              className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-gray-800 border border-gray-600 text-[10px] text-gray-200 hover:bg-gray-700"
+            >
+              <RefreshCw size={10} /> ลองใหม่
+            </button>
+          </div>
+        ) : !inView || !effectiveThumbLoaded ? (
+          <div className="w-full h-full flex items-center justify-center bg-slate-900 text-slate-400">
+            {inView ? <Loader2 size={20} className="animate-spin opacity-60" /> : <Film size={22} className="opacity-40" />}
+          </div>
+        ) : effectiveThumb ? (
+          <img
+            src={effectiveThumb}
+            alt="video thumbnail"
+            loading="lazy"
+            decoding="async"
+            className={className}
+            style={style}
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-slate-400 gap-1">
+            <Film size={24} className="opacity-50" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (isGone) {
     return (
       <div
-        ref={ref}
         data-testid="media-deleted-placeholder"
         className={`flex flex-col items-center justify-center bg-slate-800/90 text-slate-300 text-xs gap-1.5 p-3 rounded-xl text-center select-none min-h-[110px] ${className || ''}`}
         style={style}
@@ -688,7 +878,6 @@ export function SecureVideo({
   if (error) {
     return (
       <div
-        ref={ref}
         className={`flex items-center justify-center bg-gray-900 text-gray-300 text-xs gap-1.5 p-3 rounded-xl ${className || ''}`}
         style={style}
       >
@@ -705,44 +894,6 @@ export function SecureVideo({
         >
           <RefreshCw size={10} /> ลองใหม่
         </button>
-      </div>
-    );
-  }
-
-  // Grid / Feed Poster Mode: NEVER mount raw <video> tags inside lists or grids (Netflix NIO / RAM guard)
-  if (isPosterMode) {
-    if (!effectiveThumbLoaded) {
-      return (
-        <div
-          ref={ref}
-          className={`flex items-center justify-center bg-slate-900 text-slate-400 rounded-xl min-h-[120px] ${className || ''}`}
-          style={style}
-          onClick={onClick}
-        >
-          {inView ? <Loader2 size={20} className="animate-spin opacity-60" /> : <Film size={22} className="opacity-40" />}
-        </div>
-      );
-    }
-    if (effectiveThumb) {
-      return (
-        <img
-          src={effectiveThumb}
-          alt="video thumbnail"
-          loading="lazy"
-          decoding="async"
-          className={className}
-          style={style}
-          onClick={onClick}
-        />
-      );
-    }
-    return (
-      <div
-        className={`flex flex-col items-center justify-center bg-slate-900 text-slate-400 gap-1 min-h-[120px] ${className || ''}`}
-        style={style}
-        onClick={onClick}
-      >
-        <Film size={24} className="opacity-50" />
       </div>
     );
   }

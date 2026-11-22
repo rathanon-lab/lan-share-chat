@@ -48,6 +48,19 @@ export function clearAdminAlerts(): Promise<{ lastID: number; changes: number }>
   return dbRun('DELETE FROM admin_alerts');
 }
 
+export async function resolveAllPendingAlerts(): Promise<number> {
+  const res = await dbRun(
+    "UPDATE admin_alerts SET status = 'resolved', resolvedAt = ? WHERE status = 'pending'",
+    [Date.now()]
+  );
+  return res.changes;
+}
+
+export async function getPendingAlertsCount(): Promise<number> {
+  const row = await dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM admin_alerts WHERE status = 'pending'");
+  return Number(row?.c) || 0;
+}
+
 export function logActivity(
   action: string,
   actor: string,

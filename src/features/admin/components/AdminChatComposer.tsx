@@ -434,6 +434,7 @@ export function AdminChatComposer({
             initialTab={pickerTab}
             previewMode={systemSettings.stickerPreviewMode || "fullscreen_modal"}
             collageEnabled={isCollageEnabled}
+            gifMode={systemSettings.stickerPickerGifMode || "live_viewport"}
             onSelectEmoji={(c) => {
               setPickerTab("emoji");
               setAdminMessage(adminMessage + c);

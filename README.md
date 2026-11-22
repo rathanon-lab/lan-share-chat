@@ -1,13 +1,29 @@
-# LAN Share Chat v3.1.0
+# LAN Share Chat v3.2.0
 
-> High-speed LAN group workspace featuring **Netflix NIO Media Grid & Bounded FFmpeg Thumbnail Queue (`POST /api/media/thumb`)**, **24-Card Windowed Infinite Scroll (`0` raw `<video>` tags in grids)**, **Cross-Platform `112`-Char Filename Guard (`fileNameGuard.ts`)**, **Unified Cross-OS Twemoji (SVG)**, a **Shared-Room Sticker System (16 Built-In AI Stickers + Dual-Mode Pre-Send Preview + Interactive Sticker Collage Studio + Admin Pack Manager)**, **Direct WebRTC P2P transfer with automatic ACK-controlled Secure Relay fallback**, **1 GB (`1024 MB`) chunked uploads driven by `.env` Single Source of Truth**, **AES-256-GCM Encrypted Media Vault**, **Daily Inbound/Outbound Traffic Telemetry (`uploadBytes` / `egressBytes`) & Live Read Receipts (`ส่งแล้ว` / `อ่านแล้ว`)**, **Per-Zone Storage Quotas with Auto-LRU Eviction (`STORAGE_MAX_*`)**, and **Bilingual (`TH` / `EN`) + Dark Mode + Ultrawide Adaptive UI + Mobile Root Back-Guard**.
+> High-speed LAN group workspace featuring **Dual-SQLite Bulkhead (`database.sqlite` + `control_plane.sqlite`) & `0.1ms` In-Memory Emergency Gate**, **Dynamic Adaptive Media Worker Queue (`MEDIA_WORKER_CONCURRENCY=auto`)**, **Unified Lossy WebP Poster & Bidirectional Viewport Gate (`SecureImage` / `SecureVideo` / `.gif` Stickers)**, **Auto-Dynamic Browser LRU Blob Cache**, **Auto Reverse Infinite Scroll with Discord-style Unread Divider & Jump to Present**, **macOS Finder Gallery-Style File Preview (`< / >` + Collapsible Bottom Filmstrip)**, **300ms Coalesced Admin Socket Batching**, **Direct WebRTC P2P transfer with automatic ACK-controlled Secure Relay fallback**, **1 GB (`1024 MB`) chunked uploads driven by `.env` Single Source of Truth**, **AES-256-GCM Encrypted Media Vault**, and **Bilingual (`TH` / `EN`) + Dark Mode + Ultrawide Adaptive UI**.
 
-[![Next.js 16](https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs)](https://nextjs.org/)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16.4-000000?logo=nextdotjs)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-010101?logo=socketdotio)](https://socket.io/)
 [![SQLite3](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+---
+
+## What's New in v3.2.0
+
+Full release notes: [`RELEASE_NOTES_v3.2.0.md`](RELEASE_NOTES_v3.2.0.md)
+
+- **Dual-SQLite Bulkhead + In-Memory Control Plane Gate (`0.1ms`):** Separates write-heavy chat/media traffic (`database.sqlite`) from admin control state (`control_plane.sqlite`) with automatic one-time migration on startup. Emergency actions (`Spotlight`, `Lock Public Chat`, `Privacy Blur`) stay responsive (`~10ms`) even under active bot/video floods.
+- **Dynamic Adaptive Media Worker Queue (`MEDIA_WORKER_CONCURRENCY=auto`):** Auto-detects Docker cgroup/host CPU & RAM (`server/utils/mediaWorkerQueue.ts`) with `< 15%` free-RAM backpressure and `.env` override support, audited live in `/admin` → `.env / ระบบ`.
+- **Unified Lossy WebP Poster + Bidirectional Viewport Gate + Auto-Dynamic LRU Cache:** Unmounts off-screen `<img>`, video posters, and animated `.gif` stickers cleanly using persistent real-box observers (`0` layout shift, `0` flicker) and device-aware LRU Blob caps (`URL.revokeObjectURL`) to prevent iPad/mobile Safari OOM crashes.
+- **Admin-Configurable `.gif` Sticker Picker Mode (`stickerPickerGifMode`):** Switch between **`live_viewport`** (default: animates only visible tiles in viewport) and **`static_poster`** (serves compact Lossy WebP first-frame `?poster=1`, animates on hover/send).
+- **Expanded Sticker Collage Stage (`DockedStickerPreviewTray.tsx`):** Widened interactive collage canvas to fill the docked dark preview tray cleanly.
+- **Auto Reverse Infinite Scroll + Discord-Style Unread Divider & Jump to Present:** Automatically loads older history pages (`GET /api/messages/page`, `GET /api/admin/messages?limit=60`) on top scroll with scroll-position anchoring (`useChatScrollPagination.ts`), never yanks the viewport down while reading older messages, tracks `lastReadMessageId`, and adds `300ms` coalesced Admin Socket batching + one-click **Resolve All Alerts**.
+- **macOS Finder Gallery-Style File Preview (`filePreviewer.tsx` + `PreviewFilmstripBar.tsx`):** Adds floating `<` / `>` navigation arrows, keyboard `←` / `→` / `Esc` shortcuts, and a collapsible bottom thumbnail filmstrip across Admin Files and Admin Chat media.
+- **Synchronous Atomic Anti-Spam / Anti-Bot Firewall & Server-Side `HTTP 423` API Locks (`server/security.ts`, `mediaRoutes.ts`, `userRoutes.ts`):** Eliminates async SQLite race conditions with an in-memory fast-mute gate, inhuman bot-cadence detection (`>= 6` actions in `< 0.8s`), file/video-upload burst counting (catches rapid uploads even with `Text = 0`), and strict server-side `HTTP 423 Locked` enforcement on all HTTP write/upload/edit APIs & Socket.IO when locked or blurred.
+- **Surgical Admin Chat Cleanup Suite (`AdminChatPurgeModal.tsx`, `moderationPurgeRepo.ts`):** Adds **Time-Range Purge** (custom DateTime start/end + quick presets + live preview count), **Multi-User / Group Purge**, and **Smart Bot/Spam Auto-Purge** (scans spam alerts, auto-mutes & burst heuristics to wipe bot spam while preserving 100% of normal human conversation).
 
 ---
 

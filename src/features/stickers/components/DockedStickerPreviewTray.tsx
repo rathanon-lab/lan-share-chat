@@ -147,12 +147,15 @@ export function DockedStickerPreviewTray({
 
   const activeLayer =
     draft.mode === "collage" ? draft.layers.find((l) => l.uid === draft.activeUid) || null : null;
+  const isCollage = draft.mode === "collage";
 
   return (
     <div
       data-testid="sticker-docked-tray"
       onContextMenu={(e) => e.preventDefault()}
-      className="absolute bottom-full left-0 right-0 z-30 h-[182px] sm:h-[206px] rounded-t-2xl border-t border-x border-white/15 bg-slate-900/80 backdrop-blur-md shadow-[0_-8px_28px_rgba(0,0,0,0.3)] flex flex-col overflow-hidden select-none animate-in fade-in duration-150"
+      className={`absolute bottom-full left-0 right-0 z-30 ${
+        isCollage ? "h-[248px] sm:h-[300px]" : "h-[188px] sm:h-[214px]"
+      } rounded-t-2xl border-t border-x border-white/15 bg-slate-900/85 backdrop-blur-md shadow-[0_-8px_28px_rgba(0,0,0,0.35)] flex flex-col overflow-hidden select-none animate-in fade-in duration-150 transition-[height]`}
     >
       {/* Top Floating Bar */}
       <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-1 shrink-0 z-20">
@@ -264,13 +267,14 @@ export function DockedStickerPreviewTray({
         </div>
       ) : (
         <div
-          className="flex-1 min-h-0 flex items-center justify-center px-3 pb-2"
+          className="flex-1 min-h-0 flex items-center justify-center px-3 pb-2.5"
           onClick={() => setDraft((p) => (p && p.mode === "collage" ? { ...p, activeUid: null } : p))}
         >
           <div
             ref={stageRef}
             data-testid="sticker-collage-stage"
-            className="relative h-full aspect-[16/10] max-w-full rounded-xl border border-white/10 bg-black/20 overflow-visible touch-none"
+            className="relative h-full w-full max-w-[min(94%,640px)] aspect-[16/10] rounded-xl border border-white/15 bg-black/25 overflow-visible touch-none"
+            style={{ width: "min(94%, 640px)", height: "100%" }}
           >
             {draft.layers.map((layer, idx) => {
               const isActive = draft.activeUid === layer.uid;

@@ -35,16 +35,20 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
     token,
     maxUploadMb: dash.maxUploadMb,
     notify: dash.notify,
-    onUploadSuccess: dash.loadMessages,
+    onUploadSuccess: () => dash.loadMessages(undefined, true),
   });
 
   const [adminCropFile, setAdminCropFile] = useState<File | null>(null);
-  const [previewFile, setPreviewFile] = useState<PreviewableFile | null>(null);
+  const [previewState, setPreviewState] = useState<{
+    file: PreviewableFile;
+    gallery?: PreviewableFile[];
+    index?: number;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [dash.messages]);
+  const openPreviewModal = (file: PreviewableFile, gallery?: PreviewableFile[], index?: number) => {
+    setPreviewState({ file, gallery, index });
+  };
 
   async function sendAdminMessage(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +68,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
       await dash.apiFetch("/api/admin/send_message", { method: "POST", body: JSON.stringify({ text }) });
       media.setAdminMessage("");
       dash.notify(tx("ส่งข้อความแล้ว", "Message sent"));
-      await dash.loadMessages();
+      await dash.loadMessages(undefined, true);
     } catch (err: unknown) {
       dash.notify(err instanceof Error ? err.message : tx("ส่งข้อความไม่สำเร็จ", "Failed to send message"), "error");
     }
@@ -302,6 +306,10 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
             <AdminChatTab
               token={token}
               messages={dash.messages}
+              totalMessagesCount={dash.messagesTotalCount}
+              hasMoreOlder={dash.messagesHasMore}
+              loadingOlder={dash.loadingOlderMessages}
+              onLoadOlder={dash.loadOlderMessages}
               systemSettings={dash.systemSettings}
               stickerPacks={dash.stickerPacks}
               searchQuery={dash.searchQuery}
@@ -375,7 +383,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
                   },
                 })
               }
-              onPreviewFile={setPreviewFile}
+              onPreviewFile={openPreviewModal}
               onToggleAdminHold={() => dash.saveSettings({ adminHoldActive: !dash.systemSettings.adminHoldActive })}
               onToggleChatLocked={() => dash.saveSettings({ chatLocked: !dash.systemSettings.chatLocked })}
               onToggleChatBlurred={() => dash.saveSettings({ chatBlurred: !dash.systemSettings.chatBlurred })}
@@ -395,6 +403,15 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
                     })
               }
               messagesEndRef={messagesEndRef}
+              apiFetch={dash.apiFetch}
+              notify={dash.notify}
+              onMessagesPurged={(deletedIds) => {
+                if (deletedIds.length > 0) {
+                  const delSet = new Set(deletedIds);
+                  dash.setMessages((prev) => prev.filter((m) => !delSet.has(Number(m.id))));
+                }
+                dash.loadMessages(undefined, true);
+              }}
             />
           )}
 
@@ -403,6 +420,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
               alerts={dash.alerts}
               pendingAlertCount={pendingAlertCount}
               onResolveAlert={dash.resolveAlert}
+              onResolveAllAlerts={dash.resolveAllAlerts}
               onResetAlerts={() => dash.resetSystem({ alerts: true })}
               onGoToChat={() => dash.setActiveTab("chat")}
             />
@@ -441,7 +459,7 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
                   },
                 })
               }
-              onPreviewFile={setPreviewFile}
+              onPreviewFile={openPreviewModal}
             />
           )}
 
@@ -533,7 +551,20 @@ function AdminDashboard({ token, onLogout }: { token: string; onLogout: () => vo
         </div>
       </main>
 
-      {previewFile && <UniversalFilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
+      {previewState && (
+        <UniversalFilePreviewModal
+          file={previewState.file}
+          gallery={previewState.gallery}
+          currentIndex={previewState.index}
+          onNavigate={(nextIdx) => {
+            setPreviewState((prev) => {
+              if (!prev?.gallery || !prev.gallery[nextIdx]) return prev;
+              return { ...prev, file: prev.gallery[nextIdx], index: nextIdx };
+            });
+          }}
+          onClose={() => setPreviewState(null)}
+        />
+      )}
 
       {adminCropFile && (
         <AvatarCropModal

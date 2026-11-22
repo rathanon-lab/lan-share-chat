@@ -178,6 +178,35 @@ export function AdminSettingsTab({
                 </button>
               </div>
             )}
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", background: "#F8FAFC", border: `1px solid ${FB.border}`, borderRadius: "10px", padding: "10px 12px" }}>
+              <div style={{ flex: "1 1 260px" }}>
+                <div style={{ fontWeight: "600", fontSize: "13px", color: FB.textPrimary }}>
+                  โหมดสติกเกอร์เคลื่อนไหว (.gif) ในถาดเลือก (Viewport &amp; Lossy Poster)
+                </div>
+                <div style={{ fontSize: "12px", color: FB.textSecondary }}>
+                  ช่วยป้องกัน iPad/มือถือค้างเวลาแพ็กสติกเกอร์ .gif เยอะ — โหมดขยับเฉพาะในจอจะพักตัวที่เลื่อนพ้นจออัตโนมัติ หรือเลือกโหมดภาพนิ่ง Lossy WebP เพื่อประหยัด RAM สูงสุด
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  data-testid="setting-sticker-gif-viewport"
+                  onClick={() => onSaveSettings({ stickerPickerGifMode: "live_viewport" })}
+                  style={css.btn((systemSettings.stickerPickerGifMode || "live_viewport") === "live_viewport" ? "primary" : "secondary")}
+                >
+                  ขยับเฉพาะที่อยู่ในจอ (แนะนำ)
+                </button>
+                <button
+                  type="button"
+                  data-testid="setting-sticker-gif-poster"
+                  onClick={() => onSaveSettings({ stickerPickerGifMode: "static_poster" })}
+                  style={css.btn(systemSettings.stickerPickerGifMode === "static_poster" ? "primary" : "secondary")}
+                >
+                  ภาพนิ่ง Lossy (ขยับเมื่อชี้/ส่ง)
+                </button>
+              </div>
+            </div>
           </div>
 
           <div style={{ borderTop: `1px solid ${FB.border}`, paddingTop: "12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>

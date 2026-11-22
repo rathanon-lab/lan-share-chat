@@ -12,9 +12,11 @@ import {
 import {
   checkClientRestriction,
   createAdminAlert,
+  getCachedSystemSettings,
   getDeviceProfile,
   getMessageById,
   getMessageEdits,
+  getMessagesPage,
   getStickerPacksWithItems,
   getSystemSettings,
   logActivity,
@@ -60,7 +62,7 @@ import {
   handleDownloadZipGet,
   handleDownloadZipPost,
 } from './mediaZipRoutes';
-import { probeFfmpegCapability } from '../utils/ffmpegCompat';
+import { getOrCreateGifStaticPoster, probeFfmpegCapability } from '../utils/ffmpegCompat';
 
 async function handleUserMessageApi(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
   const deviceId = String(req.headers['x-device-id'] || '').trim();
@@ -105,6 +107,10 @@ async function handleUserMessageApi(req: IncomingMessage, res: ServerResponse, p
 
   if (req.method === 'PUT') {
     if (!deviceId) return jsonErr(res, 401, 'Missing x-device-id'), true;
+    const fastGate = getCachedSystemSettings();
+    if (fastGate && (fastGate.chatLocked || fastGate.chatBlurred)) {
+      return jsonErr(res, 423, 'ขณะนี้ Admin ปิดการแก้ไขและส่งข้อความชั่วคราวเพื่อตรวจสอบระบบ'), true;
+    }
     const msg = await getMessageById(id);
     if (!msg) return jsonErr(res, 404, 'Message not found'), true;
     if (msg.isDeleted) return jsonErr(res, 400, 'Cannot edit a deleted message'), true;
@@ -151,6 +157,10 @@ async function handleUserMessageApi(req: IncomingMessage, res: ServerResponse, p
 
   if (req.method === 'DELETE') {
     if (!deviceId) return jsonErr(res, 401, 'Missing x-device-id'), true;
+    const fastGate = getCachedSystemSettings();
+    if (fastGate && (fastGate.chatLocked || fastGate.chatBlurred)) {
+      return jsonErr(res, 423, 'ขณะนี้ Admin ปิดการลบและส่งข้อความชั่วคราวเพื่อตรวจสอบระบบ'), true;
+    }
     const msg = await getMessageById(id);
     if (!msg) return jsonErr(res, 404, 'Message not found'), true;
     if (msg.isDeleted) return jsonOk(res, { success: true, alreadyDeleted: true }), true;
@@ -267,16 +277,29 @@ export async function handlePublicAndUserApi(
 
   const stickerAssetMatch = pathname.match(/^\/api\/stickers\/asset\/([^/]+)\/([^/]+)$/);
   if (stickerAssetMatch && (req.method === 'GET' || req.method === 'HEAD')) {
-    const resolved = resolveStickerAssetFile(
-      decodeURIComponent(stickerAssetMatch[1]),
-      decodeURIComponent(stickerAssetMatch[2])
-    );
+    const packId = decodeURIComponent(stickerAssetMatch[1]);
+    const fileName = decodeURIComponent(stickerAssetMatch[2]);
+    const resolved = resolveStickerAssetFile(packId, fileName);
     if (!resolved) {
       jsonErr(res, 404, 'Sticker asset not found');
       return true;
     }
+
+    const urlObj = new URL(req.url || pathname, 'http://localhost');
+    const wantPoster = urlObj.searchParams.get('poster') === '1';
+    let servePath = resolved.filePath;
+    let serveType = resolved.contentType;
+
+    if (wantPoster && /\.(gif|webp|apng)$/i.test(fileName)) {
+      const poster = await getOrCreateGifStaticPoster(resolved.filePath, `${packId}_${fileName}`);
+      if (poster) {
+        servePath = poster.path;
+        serveType = poster.contentType;
+      }
+    }
+
     res.writeHead(200, {
-      'Content-Type': resolved.contentType,
+      'Content-Type': serveType,
       'Cache-Control': 'public, max-age=86400',
       'X-Content-Type-Options': 'nosniff',
     });
@@ -284,7 +307,18 @@ export async function handlePublicAndUserApi(
       res.end();
       return true;
     }
-    fs.createReadStream(resolved.filePath).pipe(res);
+    fs.createReadStream(servePath).pipe(res);
+    return true;
+  }
+
+  // Paginated message history for Reverse Auto Infinite Scroll
+  if (pathname === '/api/messages/page' && req.method === 'GET') {
+    const urlObj = new URL(req.url || pathname, 'http://localhost');
+    const limit = parseInt(urlObj.searchParams.get('limit') || '60', 10) || 60;
+    const beforeIdRaw = urlObj.searchParams.get('beforeId');
+    const beforeId = beforeIdRaw ? parseInt(beforeIdRaw, 10) : null;
+    const page = await getMessagesPage({ limit, beforeId, includeDeletedAudit: false });
+    jsonOk(res, page);
     return true;
   }
 

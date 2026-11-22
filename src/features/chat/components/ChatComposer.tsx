@@ -617,6 +617,7 @@ export function ChatComposer({
           isDark={isDark}
           previewMode={systemSettings.stickerPreviewMode || "fullscreen_modal"}
           collageEnabled={isCollageEnabled}
+          gifMode={systemSettings.stickerPickerGifMode || "live_viewport"}
           onSelectEmoji={(char) => {
             setPickerTab('emoji');
             insertTextIntoComposer(char);
