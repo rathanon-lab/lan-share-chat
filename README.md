@@ -1,6 +1,6 @@
 # LAN Share Chat v3.2.0
 
-A self-hosted group chat and direct peer-to-peer (P2P) file sharing workspace built for local networks (LAN). It runs 100% offline without external cloud services, featuring **WebRTC DataChannel P2P transfers**, an **AES-256-GCM encrypted media vault**, a **Sticker Collage Studio**, and a **9-tab Admin Governance Console**.
+A self-hosted group chat and direct peer-to-peer (P2P) file sharing workspace built for local networks (LAN). It runs 100% offline without external cloud services, featuring **WebRTC DataChannel P2P transfers**, an **AES-256-GCM token-gated media vault**, a **Sticker Collage Studio**, and a **9-tab Admin Governance Console**.
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-Interactive_Prototype-2563EB?style=for-the-badge&logo=github)](https://rathanon-lab.github.io/lan-share-chat/)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16.4-000000?style=flat-square&logo=nextdotjs)](https://nextjs.org/)
@@ -38,10 +38,10 @@ A self-hosted group chat and direct peer-to-peer (P2P) file sharing workspace bu
 - **Responsive Ultrawide, Mobile & Dark Mode UI:** Adapts cleanly from mobile portrait (`390×844`) and iPad split-view up to ultrawide desktop monitors, with instant **Thai / English (`TH / EN`)** and **Dark Mode (`🌙 / ☀️`)** toggles.
 - **In-App Rich File Previews:** View images (with pinch-to-zoom & `90°` rotation), `.mp4`/`.mov` videos (`HTTP 206` byte-range streaming), voice notes, `PDF`, `DOCX`, `Markdown`, `ZIP` trees, and Apple `HEIC` photos directly in the browser without downloading raw files first.
 
-### 2. Direct WebRTC P2P & Encrypted Vault
+### 2. Direct WebRTC P2P & Token-Gated Media Vault
 - **Direct WebRTC DataChannel + 3.5s Relay Failover:** Click **`Send`** next to any online peer to stream files peer-to-peer in `16 KB` SCTP chunks with backpressure control. If a strict VLAN blocks direct WebRTC handshake, it falls back automatically within `3.5 seconds` to an ACK-controlled Socket.IO Secure Relay (`32 KB` chunks).
 - **1 GB Chunked Uploads:** Large files (`> 2 MB`) and multi-file batches upload via resumable `2 MB` binary chunks (`MAX_CHAT_FILE_SIZE_MB=1024`).
-- **AES-256-GCM Encrypted Storage:** Uploaded room files are encrypted at rest (`storage/uploads/`) and served only through authenticated tokens and a bounded FFmpeg/WebP thumbnail worker queue.
+- **AES-256-GCM Encrypted Media Access Tokens:** Uploaded room files are isolated outside `public/` (`storage/uploads/`, with direct `/uploads/*` access blocked via `HTTP 403`) and served exclusively through authenticated **AES-256-GCM opaque metadata tokens** (`src/lib/crypto.ts`), short-lived `HTTP 206` stream tickets, and a bounded FFmpeg/WebP thumbnail worker queue.
 
 ### 3. 9-Tab Admin Governance Console (`/admin`)
 - **Overview & Live Room Controls:** Monitor server uptime, 24-hour concurrency charts, and 30-day traffic summaries. Toggle **Spotlight Hold**, **Freeze Public Chat**, **Privacy Blur**, or **Anti-Spam Firewall** in real time.
@@ -87,7 +87,7 @@ flowchart LR
         SEC["Security & Rate Guard (Anti-Spam, Ban/IP, 429 Auth)"]
         SIO["Socket.IO 4.8 (Chat, Read Receipts, Presence, WebRTC)"]
         UPLOAD["2 MB Chunked Upload & Sticker Importer"]
-        CRYPTO["AES-256-GCM Media Vault + HTTP 206 Stream + FFmpeg Cache"]
+        CRYPTO["AES-256-GCM Token-Gated Vault + HTTP 206 Stream + FFmpeg Cache"]
     end
 
     subgraph Storage["Persistent Storage (./storage)"]
@@ -99,7 +99,7 @@ flowchart LR
     CHAT & ADM <-->|"HTTPS :443 (via NPM) or HTTP :3000"| NPM
     NPM <-->|"HTTP + WebSocket Upgrade (:3000)"| SIO & API & UPLOAD
     SIO & API --> SEC
-    CHAT & ADM -->|"Encrypted Media, Stickers & 206 Streams"| CRYPTO & API
+    CHAT & ADM -->|"Token-Gated Media, Stickers & 206 Streams"| CRYPTO & API
     API & UPLOAD & CRYPTO & SIO <--> DB & VAULT
     NEXT --- Clients
 ```
@@ -137,7 +137,7 @@ npm run start
 Detailed guides are available in [`docs/`](docs/):
 
 1. **[Features & User Guide](docs/01-features-and-user-guide.md)** — Walkthrough of the main workspace, Sticker Collage Studio, P2P Transfer, Safe File Previews, and all **9 Admin Tabs**.
-2. **[Architecture & Security](docs/02-architecture-and-security.md)** — Backend structure, SQLite schema, AES-256-GCM media encryption, and Session/Anti-Spam guards.
+2. **[Architecture & Security](docs/02-architecture-and-security.md)** — Backend structure, SQLite schema, AES-256-GCM media access tokens, and Session/Anti-Spam guards.
 3. **[Deployment & Configuration](docs/03-deployment-and-configuration.md)** — Environment variables (`.env`), Docker volume layout, and Reverse Proxy setup.
 4. **[Troubleshooting & Mobile Quirks](docs/04-troubleshooting.md)** — Fixes for reverse proxy upload limits, iOS/iPadOS Safari media handling, and HTTPS Secure Context.
 

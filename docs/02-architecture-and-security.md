@@ -73,7 +73,7 @@ Upload caps, sticker bounds, and governance settings are driven from `.env` + SQ
 
 ---
 
-## 4. AES-256-GCM Encrypted Media Vault & FFmpeg Compatibility Cache
+## 4. AES-256-GCM Token-Gated Media Vault & FFmpeg Compatibility Cache
 
 Raw files in `storage/uploads/` are isolated outside Next.js `public/` static directories. Direct HTTP requests to `/uploads/*` are blocked with **`HTTP 403`**.
 
