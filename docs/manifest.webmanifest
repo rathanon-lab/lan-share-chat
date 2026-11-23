@@ -1,0 +1,22 @@
+{
+  "name": "LAN Share & Chat",
+  "short_name": "LAN Share",
+  "description": "Realtime Local Area Network Chat and File Sharing",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/avatars/04-sugar-glider.webp",
+      "sizes": "256x256",
+      "type": "image/webp"
+    },
+    {
+      "src": "/avatars/admin-special.webp",
+      "sizes": "256x256",
+      "type": "image/webp"
+    }
+  ]
+}

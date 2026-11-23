@@ -1,6 +1,6 @@
 # Architecture & Security Model
 
-Technical breakdown of **LAN Share Chat v3.1.0** modular internals and cross-repository integration.
+Technical breakdown of **LAN Share Chat v3.2.0** modular internals and cross-repository integration.
 
 ---
 
@@ -53,7 +53,7 @@ lan-share-chat/
 
 ## 2. Cross-Repository Integration with `Server-Lab-A2`
 
-`LAN Share Chat v3.1.0` is architected to decouple application logic from edge network infrastructure:
+`LAN Share Chat v3.2.0` is architected to decouple application logic from edge network infrastructure:
 - **[`Server-Lab-A2`](../../Server-Lab-A2)** is a standalone Infrastructure-as-Code (IaC) repository (Technitium DNS Server, Nginx Proxy Manager, MariaDB, Uptime Kuma, Dozzle, and Internal Root CA scripts) that does **not** bundle or build `lan-share-chat` source code.
 - Over the LAN (`192.168.1.0/24`), **Technitium DNS** resolves `chat.lab.lan` (and optional `bot.lab.lan`) to the `Server-Lab-A2` host (`192.168.1.5`).
 - **Nginx Proxy Manager** terminates `365`-day wildcard HTTPS (`*.lab.lan`), enables WebSocket upgrades (`Upgrade: websocket`) for Socket.IO, applies a built-in `client_max_body_size 2000m` (`2 GB`) ceiling that accommodates `lan-share-chat`'s `1 GB` (`1024 MB`) chunked uploads (`2 MB` per chunk), and forwards requests to `http://host.docker.internal:3000` (or `http://<LAN_IP>:3000`).

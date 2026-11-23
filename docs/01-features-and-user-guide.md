@@ -1,8 +1,8 @@
 # Features & User Guide
 
-Comprehensive guide to all user and administrator workflows in **LAN Share Chat v3.1.0**.
+Comprehensive guide to all user and administrator workflows in **LAN Share Chat v3.2.0**.
 
-> **What's New in v3.1.0:**
+> **What's New in v3.2.0:**
 > - **Netflix NIO Media Grid & Windowing:** Displays 24 cards per scroll step in Admin Files (`0` `<video>` tags in grids), fetching `<= 360px` JPEG posters from `POST /api/media/thumb` with 6-slot browser queueing.
 > - **Cross-Platform `<= 112`-Char Filename Guard:** Validates filenames across sender UI (chat, admin, P2P), HTTP chunk upload, WebRTC signaling (`INVALID_FILENAME`), and client downloads to prevent Windows/Linux/Android/iPad path failures.
 > - **Mobile Root Back-Guard & History Replace:** Cleanly unwinds modals/lightbox/Peers sub-tab on hardware Back, prevents `/admin` history bounce via `<Link href="/" replace>`, and surfaces a clear top-level root notice.

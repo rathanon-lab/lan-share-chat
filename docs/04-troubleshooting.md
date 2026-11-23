@@ -1,10 +1,10 @@
 # Troubleshooting & Cross-Device Notes
 
-Real-world diagnostics collected during testing of **LAN Share Chat v3.1.0** across **Windows (16:9 & Ultrawide)**, **iPadOS Safari**, **iOS Safari**, and **Android Chrome**.
+Real-world diagnostics collected during testing of **LAN Share Chat v3.2.0** across **Windows (16:9 & Ultrawide)**, **iPadOS Safari**, **iOS Safari**, and **Android Chrome**.
 
 ---
 
-## 7. Cross-Platform Filename Length & Mobile Back-Button Traps (`v3.1.0`)
+## 7. Cross-Platform Filename Length & Mobile Back-Button Traps (`v3.2.0`)
 - **Long / Unsafe Filenames (`> 112` chars, `:`, trailing `.`, or Windows reserved `CON`/`NUL`):** Enforced automatically before upload (`fileNameGuard.ts`) and on P2P signaling (`INVALID_FILENAME`) so downloads never fail on Windows NTFS or mobile filesystems. Users are guided to use concise filenames and include detailed context in the chat message caption.
 - **Mobile Back-Button Loops:** Switching from `/admin` back to `/` replaces history (`<Link href="/" replace>`), overlays unwind one layer per gesture via `useModalHistoryStack`, and the root screen emits a non-bouncing top-level toast instead of redirecting back into `/admin`.
 

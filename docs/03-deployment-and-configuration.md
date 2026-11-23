@@ -1,6 +1,6 @@
 # Deployment & Configuration Guide
 
-Standalone and Reverse-Proxy setup instructions for **LAN Share Chat v3.1.0** using **Docker Compose**, **Node.js 24 LTS**, and **`Server-Lab-A2`**.
+Standalone and Reverse-Proxy setup instructions for **LAN Share Chat v3.2.0** using **Docker Compose**, **Node.js 24 LTS**, and **`Server-Lab-A2`**.
 
 ---
 
